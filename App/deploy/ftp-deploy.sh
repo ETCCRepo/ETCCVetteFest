@@ -1,0 +1,132 @@
+#!/usr/bin/env bash
+# Uploads the deploy/ folder's server files (CODE, not DATA) to Hostinger
+# over FTPS. Run `node build.js` first so App/ETCCVetteFest.html is current —
+# this script uploads that file as app-bundle.html, the template index.php
+# stitches live data into on every request. To refresh DATA (a new pair of
+# ClubExpress CSV exports) without a code change, use Developer > Import
+# Registrations in the app, or deploy/upload-registrations.js — see README.md.
+# This script never touches anything under data/, which lives only on the
+# server.
+#
+# Credentials: either set FTP_HOST/FTP_USER/FTP_PASS as env vars, or create
+# deploy/.ftp-credentials (gitignored — copy .ftp-credentials.example and
+# fill in the real password) and this script reads them from there instead —
+# same pattern as ../BusinessWebExpress/.ftp-credentials. Env vars, if set,
+# take precedence over the file.
+#
+# The account's FTP home directory is expected to already be the target
+# folder (e.g. public_html/vettefest) — check hPanel > Files > FTP Accounts >
+# Directory if unsure. FTPS on Hostinger has historically failed hostname
+# certificate validation for custom FTP hostnames (SEC_E_WRONG_PRINCIPAL) —
+# this script uses -k to skip verification; the channel is still encrypted,
+# just not identity-checked. Only run this against a host/account you trust.
+set -euo pipefail
+
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+CRED_FILE="$DIR/.ftp-credentials"
+if [ -z "${FTP_HOST:-}" ] && [ -f "$CRED_FILE" ]; then
+  # `|| [ -n "$key" ]` keeps the loop's last iteration even if the file has no
+  # trailing newline (read exits nonzero on that final line but still
+  # populates $key/$value — without this, the last KEY=VALUE line is silently
+  # dropped). Stripping a trailing \r handles files saved with Windows line
+  # endings (Notepad etc.), which would otherwise leave it stuck on the value.
+  while IFS='=' read -r key value || [ -n "$key" ]; do
+    key="${key%$'\r'}"
+    value="${value%$'\r'}"
+    case "$key" in
+      FTP_HOST) FTP_HOST="$value" ;;
+      FTP_USER) FTP_USER="$value" ;;
+      FTP_PASS) FTP_PASS="$value" ;;
+    esac
+  done < "$CRED_FILE"
+fi
+
+: "${FTP_HOST:?Set FTP_HOST (env var, or create deploy/.ftp-credentials from the .example file)}"
+: "${FTP_USER:?Set FTP_USER (env var, or create deploy/.ftp-credentials from the .example file)}"
+: "${FTP_PASS:?Set FTP_PASS (env var, or create deploy/.ftp-credentials from the .example file)}"
+BASE="ftp://${FTP_HOST}"
+NETRC="$(mktemp)"
+trap 'rm -f "$NETRC"' EXIT
+
+cat > "$NETRC" <<EOF
+machine ${FTP_HOST}
+login ${FTP_USER}
+password ${FTP_PASS}
+EOF
+
+if [ ! -f "$DIR/../ETCCVetteFest.html" ]; then
+  echo "App/ETCCVetteFest.html not found — run 'node build.js' first." >&2
+  exit 1
+fi
+
+# FTPS over Windows' schannel TLS stack has a history of dropping mid-transfer
+# on this host (see the file header comment) — manifesting as curl exit 28
+# (timeout), 55 (connection reset), or a server-side 550 (exit 25). The 550
+# case has a specific known cause here: the server (ProFTPd) uses
+# "HiddenStores" — it writes an upload to ".in.<filename>." first and only
+# renames it to the real filename on success. If a transfer gets dropped
+# mid-upload, that hidden temp file is left behind and blocks every further
+# attempt to upload the same filename with a 550. On a 550 we delete ONLY
+# that hidden temp file (never the real target — deleting the live file
+# would leave the site broken if a retry then also failed) before retrying.
+upload() {
+  local remoteName="$1" localPath="${2:-$DIR/$1}"
+  local attempt rc
+  for attempt in 1 2 3; do
+    echo "--- Uploading $remoteName (attempt $attempt) ---"
+    rc=0
+    curl -sS --netrc-file "$NETRC" --ftp-ssl -k --ftp-pasv -T "$localPath" "$BASE/$remoteName" -m 120 || rc=$?
+    if [ $rc -eq 0 ]; then return 0; fi
+    echo "    upload failed (curl exit $rc)" >&2
+    if [ $rc -eq 25 ] && [ $attempt -lt 3 ]; then
+      echo "    deleting stale hidden temp file .in.$remoteName. before retrying" >&2
+      curl -sS --netrc-file "$NETRC" --ftp-ssl -k -Q "-DELE .in.$remoteName." "$BASE/" -m 30 -o /dev/null 2>&1 || true
+    fi
+    if [ $attempt -lt 3 ]; then sleep 5; fi
+  done
+  echo "    giving up on $remoteName after 3 attempts" >&2
+  return $rc
+}
+
+# The built offline-tool bundle, re-uploaded under a different name — index.php
+# reads this as its template and stitches in live server-side data on every
+# request (see that file). It intentionally carries no baked-in CSV data.
+upload "app-bundle.html" "$DIR/../ETCCVetteFest.html"
+upload "_login.html"
+upload "index.php"
+upload "lib.php"
+upload "shows.php"
+upload "app-settings.php"
+upload "deleted-registrations.php"
+upload "registration-overrides.php"
+upload "registrations-upload.php"
+upload "registrations-import.php"
+upload "send-tshirt-order-email.php"
+upload "forgot-password.php"
+upload "reset-password.php"
+upload "dev-forgot-password.php"
+upload "dev-reset-password.php"
+upload "logout.php"
+
+upload "ETCClogoWhiteBackground.png" "$DIR/../assets/ETCClogoWhiteBackground.png"
+upload ".htaccess"
+# secrets.php is deliberately NEVER uploaded here (unlike earlier versions of this
+# script) — reset-password.php now rewrites the LIVE copy directly when someone
+# uses the "Forgot password?" flow. If this script kept uploading the local copy
+# on every ordinary code deploy, it would silently overwrite (revert) any password
+# changed that way with whatever stale hash happens to be sitting in the local
+# repo. To push a manually-generated hash (openssl passwd, see README.md) instead
+# of using the reset flow, upload it by hand:
+#   curl -sS --netrc-file "$NETRC" --ftp-ssl -k --ftp-pasv -T deploy/secrets.php "$BASE/secrets.php"
+# The whole data/ tree (data/shows.json and every data/<year>/*.json —
+# registrations-data, deleted-registrations, registration-overrides,
+# app-settings), plus the global password-reset.json and
+# dev-password-reset.json, are deliberately never uploaded here: they're live,
+# server-accumulated data with no meaningful local copy to overwrite them
+# with. See registrations-import.php (the browser CSV upload),
+# upload-registrations.js (the CLI equivalent) and Developer > Settings for
+# how each of those actually gets refreshed.
+
+echo "--- Final listing ---"
+curl -sS --netrc-file "$NETRC" --ftp-ssl -k --ftp-pasv "$BASE/" -m 20

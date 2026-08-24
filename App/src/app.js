@@ -1,0 +1,2324 @@
+/* app.js — DOM wiring and rendering for the hosted site. Globals:
+ * VetteFestConfig, VetteFestLogic, Papa, ExcelJS (ExcelJS/Papa are only
+ * exercised here via the Developer > Run Regression Tests round-trip, see
+ * runRegressionTests()). */
+(function () {
+  "use strict";
+  var CONFIG = window.VetteFestConfig;
+  var LOGIC = window.VetteFestLogic;
+
+  var state = {
+    reg: null,   // { name, rows }
+    act: null,   // { name, rows }
+    result: null,
+    sortCol: null,
+    sortDir: 1,
+    search: "",
+    // Every status is on by default, unlike the sibling car show app. The
+    // workbook's Summary sheet counts every registration it imported
+    // regardless of payment state, and the officers reconcile this app's
+    // Summary against that sheet — so the out-of-the-box numbers have to
+    // match it. Unticking Not Paid is a deliberate act, not the default.
+    statusFilter: { paid: true, notpaid: true, cancelled: true, empty: true },
+    inShowFilter: false, // Registration toolbar's "In Show" checkbox — only rows with SHW = Yes
+    judgeFilter: false, // Registration toolbar's "Judge" checkbox — only rows with CSJ = Yes
+
+    // ---- Events (one per year) ----
+    // The app holds a completely separate dataset per event year, stored
+    // server-side under data/<year>/. index.php inlines the registry and
+    // which event (if any) this session has open via ingestShows(). Until an
+    // event is open, renderViews() shows the Events picker and nothing else.
+    shows: [],            // [{ year, name, status, created }], newest year first
+    currentShow: null,    // the event THIS session has open, or null
+    publicShowYear: null, // the event marked "current" in the registry
+    showsError: null,     // last shows.php failure, shown on the picker
+    showsBusy: false,     // a shows.php call is in flight
+    showPendingDelete: null, // event awaiting delete confirmation, or null
+
+    tab: "sum",
+    detailRow: null,  // registration row currently shown in the detail modal, or null
+    zoom: 1,          // table zoom level (1 = 100%); lets all columns fit without scrolling
+    zoomAutoFitDone: false, // the table defaults to "Fit" once per session (not on every
+                             // tab switch, so a manual zoom choice sticks)
+
+    menuOpen: false,      // hamburger drawer
+    settingsOpen: false,  // Settings full-page screen
+    testsPageOpen: false, // Regression Tests full-page screen (Developer menu)
+    testResults: null,    // { results: [{label, ok, expected, actual}], passed, failed } | null
+    testRunning: false,
+    testOnlyErrors: false,
+
+    developerLoginOpen: false, // "Developer Login" full-page screen
+    developerVerifying: false, // password check in flight
+    developerUnlocked: false,  // password verified this page load — reveals the Developer submenu
+    developerError: null,
+
+    changelogOpen: false,
+    changelogLoading: false,
+    changelogError: null,
+    changelogMeta: null,
+    changelogCommits: null,
+
+    appSettings: {          // filled by ingestAppSettings(); see app-settings.php. Defaults
+                             // here are a fallback for the brief window before that hook
+                             // runs — app-settings.php's own $defaults is the real source.
+      tshirtVendorEmail: "",
+      tshirtOrderSubject: "ETCC Vette Fest — T-Shirt Order"
+    },
+    appSettingsSaving: false,
+    appSettingsError: null,
+    appSettingsSaved: false,
+
+    tshirtOrderPageOpen: false, // T-Shirts tab > "T-Shirt Order Form" full-page screen
+    emailTo: "",
+    emailSubject: "",
+    emailBody: "",
+    emailCc: "",
+    emailBcc: "",
+    emailSending: false,
+    emailSendError: null,
+    emailSent: false,
+
+    deletedCsvKeys: {},   // csvRegKey(rec) -> true, for rows removed via the Registration
+                           // tab's checkbox/bulk-delete — filled by
+                           // ingestDeletedRegistrations(); excluded in regenerate(), so
+                           // they stay gone across reloads and re-imports too
+    csvOverrides: {},     // csvRegKey(rec) -> patch object, for rows edited via the detail
+                           // modal — filled by ingestRegistrationOverrides(); re-applied on
+                           // top of a fresh parse in regenerate(), so edits survive a
+                           // re-import (see registration-overrides.php)
+    regSelected: {},      // rowKey(r) -> true, for the Registration tab's row checkboxes
+    deleteRegSelectedOpen: false,
+    regDeleteSyncError: null,
+    detailEditError: null
+  };
+
+  // Populated in init() from window.__vettefestSite, which deploy/index.php
+  // injects in the very first inline script, before app.js runs. Read inside
+  // init() rather than at module-load time, since init() is what's guaranteed
+  // to run after every inline script in the document, including that one.
+  var SITE_CONFIG = {};
+
+  var NUMERIC_BASE = { "Total Fee": 1, "Year": 1, "#": 1 };
+  var CURRENCY_COLS = { "Total Fee": 1 };
+  var DATE_COLS = { "Reg Date": 1 };
+  // These headers are far wider than their data ("Yes"/"No", a digit or two) —
+  // force-wrapping them shrinks the column to fit the data, not the label.
+  var NARROW_HEADER_COLS = { "Payment Type": 1 };
+
+  // The one currency formatter every money value in this app goes through —
+  // always 2 decimals, comma-grouped over 999, so no field shows a bare
+  // "$845" next to another showing "$845.00".
+  function fmtMoney(v) { return v === "" || v == null ? "" : "$" + Number(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+  // Reuses LOGIC.formatPhone — the same function generate() already runs CSV
+  // phones through — so there's one implementation and one regression-tested
+  // set of rules. On a CSV row this is a harmless no-op re-format.
+  function fmtPhone(v) { return v == null || v === "" ? v : LOGIC.formatPhone(v); }
+  // "Reg Date" arrives from ClubExpress as an unpadded, seconds-included
+  // string ("3/7/2026 8:15:00 AM") — reformat it so it lines up with every
+  // other date/time the app shows.
+  function fmtCsvDate(v) {
+    if (v == null || v === "") return v;
+    var d = new Date(v);
+    if (isNaN(d.getTime())) return v;
+    return fmtDate(d);
+  }
+  function isShirtCol(c) { return state.result && state.result.shirtColumns.indexOf(c) !== -1; }
+  function isNumericCol(c) { return NUMERIC_BASE[c] || isShirtCol(c); }
+
+  // ---------- status filter ----------
+  // ClubExpress "Status" values collapse into 4 buckets: an exact
+  // "Paid"/"Cancelled" match, blank, or anything else as Not Paid (covers
+  // "Not paid in time limit", "Open", etc.).
+  var STATUS_BUCKETS = [
+    { key: "paid", label: "Paid" },
+    { key: "notpaid", label: "Not Paid" },
+    { key: "cancelled", label: "Cancelled" },
+    { key: "empty", label: "Empty" }
+  ];
+  function classifyStatus(v) {
+    var s = String(v == null ? "" : v).trim();
+    if (!s) return "empty";
+    var low = s.toLowerCase();
+    if (low === "cancelled") return "cancelled";
+    if (low === "paid") return "paid";
+    return "notpaid";
+  }
+
+  // ---------- shirts: 12 sparse columns collapsed into one summary column ----------
+  var SHIRTS_COL = "__shirts";
+  // Every shirt bucket this row has 1+ of, as { label, qty } — used by both
+  // the table's compact summary cell and the detail modal's breakdown.
+  function shirtSummaryParts(row) {
+    var parts = [];
+    CONFIG.SHIRT_BUCKETS.forEach(function (b) {
+      var qty = Number(row[b.col]) || 0;
+      if (qty > 0) parts.push({ label: b.col, qty: qty });
+    });
+    return parts;
+  }
+  function shirtSummaryText(row) {
+    return shirtSummaryParts(row).map(function (p) { return p.label + (p.qty > 1 ? " ×" + p.qty : ""); }).join(", ");
+  }
+  function shirtTotal(row) {
+    return shirtSummaryParts(row).reduce(function (sum, p) { return sum + p.qty; }, 0);
+  }
+
+  var $ = function (sel, el) { return (el || document).querySelector(sel); };
+  function el(tag, attrs, kids) {
+    var e = document.createElement(tag);
+    if (attrs) Object.keys(attrs).forEach(function (k) {
+      if (k === "class") e.className = attrs[k];
+      else if (k === "html") e.innerHTML = attrs[k];
+      else if (k === "text") e.textContent = attrs[k];
+      else e.setAttribute(k, attrs[k]);
+    });
+    (kids || []).forEach(function (c) { e.appendChild(typeof c === "string" ? document.createTextNode(c) : c); });
+    return e;
+  }
+
+  // A money input always shown with a "$" prefix, so every dollar figure an
+  // officer types looks like currency, not a bare number.
+  // Returns { input, wrap } — append wrap, read/write input as usual.
+  function moneyInput(attrs) {
+    attrs = attrs || {};
+    attrs.type = attrs.type || "number";
+    if (attrs.type === "number") {
+      attrs.step = attrs.step || "0.01";
+      attrs.min = attrs.min || "0";
+    }
+    attrs.placeholder = attrs.placeholder || "0.00";
+    attrs.style = (attrs.style ? attrs.style + "; " : "") + "padding-left:20px; width:100%";
+    var input = el("input", attrs);
+    var wrap = el("div", { style: "position:relative; flex:1" }, [
+      el("span", { style: "position:absolute; left:8px; top:50%; transform:translateY(-50%); color:#666", text: "$" }),
+      input
+    ]);
+    return { input: input, wrap: wrap };
+  }
+
+  function debounce(fn, delay) {
+    var timeoutId = null;
+    return function () {
+      var args = arguments, context = this;
+      if (timeoutId) clearTimeout(timeoutId);
+      timeoutId = setTimeout(function () { fn.apply(context, args); }, delay);
+    };
+  }
+
+  // generatedAt defaults to "now", but callers with a real known ingestion
+  // time — index.php's boot script, replaying the CSVs it stored on this page
+  // load — pass it explicitly so "CSVs loaded:" reflects when the export
+  // actually happened, not whenever a visitor opens the page.
+  function regenerate(generatedAt) {
+    if (!state.reg) { state.result = null; renderViews(); return; }
+    state.result = LOGIC.generate(state.reg.rows, state.act ? state.act.rows : [], {
+      regFileName: state.reg.name,
+      actFileName: state.act ? state.act.name : "",
+      generatedAt: generatedAt || new Date(),
+      // The open event's year decides the Reg # prefix. Without it,
+      // generate() would guess from the earliest registration date — right
+      // nearly always, but wrong for an event whose sign-ups open in the
+      // previous calendar year.
+      eventYear: state.currentShow ? state.currentShow.year : null
+    });
+    // Exclude rows removed via bulk-delete, then re-apply any detail-modal
+    // field edits. generate() has no notion of either, so both run against
+    // its fresh output every time.
+    if (state.result.ok) {
+      state.result.registrations = state.result.registrations
+        .filter(function (r) { return !state.deletedCsvKeys[csvRegKey(r)]; })
+        .map(function (r) {
+          var patch = state.csvOverrides[csvRegKey(r)];
+          return patch ? applyRecordPatch(r, patch) : r;
+        });
+    }
+    state.sortCol = null; state.sortDir = 1;
+    renderViews();
+  }
+
+  // Stable identity for a registration row across re-exports. Deliberately
+  // NOT built from Reg #: that's a sequence generate() re-derives from row
+  // order on every load, so the same string can mean a different person after
+  // someone earlier is deleted. Reg Date (the transaction's own timestamp)
+  // plus the name is stable for the same person's same registration across
+  // exports, and distinct between different people.
+  function csvRegKey(rec) {
+    var raw = String(rec["Reg Date"] || "") + "_" + String(rec["Last Name"] || "") + "_" + String(rec["First Name(s)"] || "");
+    return raw.toLowerCase().replace(/[^a-z0-9]+/g, "");
+  }
+  function rowKey(r) { return csvRegKey(r); }
+
+  // Merges an edit patch onto a copy of a record, recomputing Gen if Year was
+  // part of the patch (Gen is derived, never directly editable — see
+  // EDITABLE_FIELDS). Shared by regenerate() (re-applying a persisted edit on
+  // every load) and the detail modal's Save handler (building the
+  // just-edited record to show immediately, before the next reload).
+  function applyRecordPatch(rec, patch) {
+    var merged = {};
+    Object.keys(rec).forEach(function (k) { merged[k] = rec[k]; });
+    Object.keys(patch).forEach(function (k) { merged[k] = patch[k]; });
+    if (Object.prototype.hasOwnProperty.call(patch, "Year")) {
+      merged["Gen"] = LOGIC.genFromYear(LOGIC.toInt(patch["Year"]));
+    }
+    return merged;
+  }
+
+  // ---------- views ----------
+  function renderViews() {
+    var app = $("#app");
+    app.innerHTML = "";
+
+    // The Events picker is the landing screen: every session starts here and
+    // stays here until an event is opened. Nothing below this point makes
+    // sense without one — every tab reads data belonging to a specific year,
+    // and index.php deliberately ships none of it until one is selected.
+    if (!state.currentShow) {
+      app.appendChild(buildShowsPage());
+      renderDeleteShowConfirm();
+      return;
+    }
+
+    app.appendChild(buildTabs());
+
+    // The T-Shirts and Reports tabs handle their own empty states, so they
+    // work before any CSV pair has been imported.
+    if (state.tab === "tsh") { app.appendChild(buildTshirtView()); return; }
+    if (state.tab === "reports") { app.appendChild(buildReportsView()); return; }
+
+    if (!state.result) {
+      app.appendChild(el("div", { class: "empty-state" },
+        ["No registration data loaded yet — use the menu's Developer → Import Registrations to load the first CSV export."]));
+      return;
+    }
+    if (!state.result.ok) {
+      app.appendChild(el("div", { class: "panel" }, [
+        el("h3", { text: "Could not generate" }),
+        el("ul", { class: "messages" }, state.result.messages.map(function (m) { return el("li", { text: m }); }))
+      ]));
+      return;
+    }
+    if (state.tab === "reg") app.appendChild(buildLoadedInfo());
+    if (state.tab === "reg" && state.regDeleteSyncError) {
+      app.appendChild(el("div", { class: "messages", style: "margin-bottom:10px" }, [state.regDeleteSyncError]));
+    }
+    app.appendChild(state.tab === "reg" ? buildRegToolbar() : buildSummaryToolbar());
+    app.appendChild(state.tab === "reg" ? buildRegView() : buildSummaryView());
+  }
+
+  function buildTabs() {
+    var mk = function (id, label) {
+      var t = el("div", { class: "tab" + (state.tab === id ? " active" : ""), text: label });
+      t.addEventListener("click", function () { state.tab = id; renderViews(); });
+      return t;
+    };
+    return el("div", { class: "tabs no-print" },
+      [mk("sum", "Summary"), mk("reg", "Registration"), mk("tsh", "T-Shirts"), mk("reports", "Reports")]);
+  }
+
+  // ---------- Events picker (the landing screen, shown before the tabs) ----------
+  // Opening an event is a full page load (?year=NNNN) rather than a
+  // client-side swap: index.php re-inlines every dataset from scratch on each
+  // request, so a reload gets the new year's data with no chance of one
+  // event's records lingering in memory alongside another's.
+
+  // The header bar and browser tab both name the event that's open, so it's
+  // obvious at a glance which year is being edited — the single most
+  // important thing to get wrong now that there's more than one. Both fall
+  // back to the plain product name on the picker, where nothing is open.
+  // build.js ships that plain name as the static markup, so this only ever
+  // needs to write over it.
+  function applyShowTitle() {
+    var year = state.currentShow ? String(state.currentShow.year) : "";
+    var h1 = document.querySelector("header.app h1");
+    if (h1) h1.textContent = year ? year + " Vette Fest Manager" : "Vette Fest Manager";
+    document.title = year ? year + " ETCC Vette Fest — Registration" : "ETCC Vette Fest — Registration";
+  }
+
+  function openShow(year) { location.href = "?year=" + encodeURIComponent(year); }
+  function closeShow() { location.href = "?year="; }
+
+  // Every mutation goes through shows.php and then adopts the list it
+  // returns, rather than patching state locally. The registry is tiny, these
+  // actions are rare and deliberate, and a wrong local guess would show the
+  // officer an event that doesn't exist (or hide one that does).
+  function pushShowAction(payload, onDone) {
+    if (!SITE_CONFIG.showsApiUrl) return;
+    state.showsBusy = true;
+    state.showsError = null;
+    renderViews();
+    fetch(SITE_CONFIG.showsApiUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    }).then(function (res) {
+      return res.json().then(function (data) { return { ok: res.ok, data: data }; });
+    }).then(function (r) {
+      state.showsBusy = false;
+      if (!r.ok || !r.data || !r.data.ok) {
+        state.showsError = (r.data && r.data.error) || "That did not work — please try again.";
+        renderViews();
+        return;
+      }
+      state.shows = Array.isArray(r.data.shows) ? r.data.shows : [];
+      state.publicShowYear = r.data.current ? String(r.data.current) : null;
+      renderViews();
+      if (onDone) onDone(r.data);
+    }).catch(function () {
+      state.showsBusy = false;
+      state.showsError = "Could not reach the server — check your connection and try again.";
+      renderViews();
+    });
+  }
+
+  function createShow() {
+    var year = prompt("What year is this Vette Fest?", String(new Date().getFullYear()));
+    if (year === null) return;
+    year = LOGIC.validShowYear(year);
+    if (year === null) {
+      state.showsError = "Enter a four-digit year, for example 2027.";
+      renderViews();
+      return;
+    }
+    var name = prompt("Name for this event:", year + " Vette Fest");
+    if (name === null) return;
+    // Land straight in the new event rather than making the officer click it —
+    // creating one is only ever a prelude to working in it.
+    pushShowAction({ action: "create", year: year, name: String(name).trim() }, function () {
+      openShow(year);
+    });
+  }
+
+  function renameShow(show) {
+    var name = prompt("Name for this event:", show.name || "");
+    if (name === null || !String(name).trim()) return;
+    pushShowAction({ action: "rename", year: show.year, name: String(name).trim() });
+  }
+
+  // Archiving is presentational — it labels the row. An archived event is NOT
+  // read-only, because a past event's records still get corrected after the fact.
+  function setShowStatus(show, archived) {
+    pushShowAction({ action: archived ? "archive" : "unarchive", year: show.year });
+  }
+
+  // Which event the registry considers "current". Nothing public writes into
+  // a Vette Fest event (there are no public forms here, unlike the car show
+  // app), so this is purely the default an officer lands on — but it's still
+  // worth being explicit about which year is the live one.
+  function setCurrentShow(show) {
+    pushShowAction({ action: "set_current", year: show.year });
+  }
+
+  function confirmDeleteShow(show) { state.showPendingDelete = show; renderViews(); }
+  function cancelDeleteShow() { state.showPendingDelete = null; state.showsError = null; renderViews(); }
+  function deleteShow(show, devPassword) {
+    pushShowAction({ action: "delete", year: show.year, devPassword: devPassword }, function () {
+      state.showPendingDelete = null;
+      renderViews();
+    });
+  }
+
+  function buildShowsPage() {
+    var kids = [];
+
+    var newBtn = el("button", { class: "btn primary" }, ["+ New Vette Fest"]);
+    newBtn.addEventListener("click", createShow);
+    if (state.showsBusy) newBtn.setAttribute("disabled", "disabled");
+    kids.push(el("div", { class: "shows-head" }, [
+      el("h3", { text: "Vette Fest Events" }),
+      el("span", { class: "spacer" }),
+      newBtn
+    ]));
+
+    if (state.showsError && !state.showPendingDelete) {
+      kids.push(el("div", { class: "messages", style: "margin-bottom:10px" }, [state.showsError]));
+    }
+
+    if (!state.shows.length) {
+      kids.push(el("div", { class: "empty-state" },
+        ["No events yet — click + New Vette Fest to set up the first one."]));
+      return el("div", { class: "panel shows-panel" }, kids);
+    }
+
+    var head = el("tr", {}, [
+      el("th", { text: "Event" }),
+      el("th", { text: "Status" }),
+      el("th", { text: "Current" }),
+      el("th", { text: "" })
+    ]);
+
+    var rows = state.shows.map(function (s) {
+      var year = String(s.year);
+      var archived = s.status === "archived";
+      var isCurrent = state.publicShowYear === year;
+
+      var nameLink = el("a", { class: "show-open", href: "#", text: s.name || (year + " Vette Fest") });
+      nameLink.addEventListener("click", function (e) { e.preventDefault(); openShow(year); });
+
+      var statusBadge = el("span", {
+        class: "badge " + (archived ? "badge-muted" : "badge-ok"),
+        text: archived ? "ARCHIVED" : "ACTIVE"
+      });
+
+      var currentCell;
+      if (isCurrent) {
+        currentCell = el("span", { class: "badge badge-accent", text: "CURRENT" });
+      } else {
+        currentCell = el("button", { class: "btn btn-sm" }, ["Make current"]);
+        currentCell.addEventListener("click", function () { setCurrentShow(s); });
+        if (state.showsBusy) currentCell.setAttribute("disabled", "disabled");
+      }
+
+      var openBtn = el("button", { class: "btn btn-sm" }, ["Open"]);
+      openBtn.addEventListener("click", function () { openShow(year); });
+      var renameBtn = el("button", { class: "btn btn-sm" }, ["Rename"]);
+      renameBtn.addEventListener("click", function () { renameShow(s); });
+      var archiveBtn = el("button", { class: "btn btn-sm" }, [archived ? "Unarchive" : "Archive"]);
+      archiveBtn.addEventListener("click", function () { setShowStatus(s, !archived); });
+      var deleteBtn = el("button", { class: "btn btn-sm btn-warn" }, ["Delete"]);
+      deleteBtn.addEventListener("click", function () { confirmDeleteShow(s); });
+      if (state.showsBusy) {
+        [renameBtn, archiveBtn, deleteBtn].forEach(function (b) { b.setAttribute("disabled", "disabled"); });
+      }
+
+      return el("tr", {}, [
+        el("td", {}, [nameLink]),
+        el("td", {}, [statusBadge]),
+        el("td", {}, [currentCell]),
+        el("td", { class: "show-actions" }, [openBtn, renameBtn, archiveBtn, deleteBtn])
+      ]);
+    });
+
+    kids.push(el("table", { class: "grid shows-grid" }, [
+      el("thead", {}, [head]),
+      el("tbody", {}, rows)
+    ]));
+    kids.push(el("div", { class: "shows-note" }, [
+      "Each event keeps its own registrations, edits and settings — nothing is shared between years."
+    ]));
+
+    return el("div", { class: "panel shows-panel" }, kids);
+  }
+
+  // Deleting an event throws away a whole year of records and cannot be
+  // undone, so it takes the Developer password — the stronger of the app's
+  // two credentials. The server checks it too (shows.php); this is not the
+  // gate, just where it's asked.
+  function renderDeleteShowConfirm() {
+    var host = $("#confirmHost");
+    if (!host) return;
+    host.innerHTML = "";
+    var show = state.showPendingDelete;
+    if (!show) return;
+
+    var closeBtn = el("button", { class: "btn" }, ["✕"]);
+    closeBtn.addEventListener("click", cancelDeleteShow);
+    var head = el("div", { class: "modal-head" }, [
+      el("h3", { text: "Delete " + (show.name || show.year) + "?" }),
+      el("span", { class: "spacer" }),
+      closeBtn
+    ]);
+
+    var pw = el("input", { type: "password", placeholder: "Developer password", autocomplete: "off" });
+    var yesBtn = el("button", { class: "btn primary", style: "background:var(--warn);border-color:var(--red-dark)" },
+      ["Yes, Delete This Event"]);
+    yesBtn.addEventListener("click", function () { deleteShow(show, pw.value); });
+    var noBtn = el("button", { class: "btn" }, ["Cancel"]);
+    noBtn.addEventListener("click", cancelDeleteShow);
+    if (state.showsBusy) yesBtn.setAttribute("disabled", "disabled");
+    pw.addEventListener("keydown", function (e) {
+      if (e.key === "Enter") { e.preventDefault(); deleteShow(show, pw.value); }
+    });
+
+    var body = el("div", { class: "modal-body" }, [
+      el("p", {}, ["This permanently deletes every registration and edit for " +
+        (show.name || show.year) + ". This cannot be undone."]),
+      el("p", {}, ["Enter the Developer password to confirm:"]),
+      pw
+    ]);
+    if (state.showsError) {
+      body.appendChild(el("div", { class: "messages", style: "margin-top:10px" }, [state.showsError]));
+    }
+    body.appendChild(el("div", { class: "settings-actions" }, [yesBtn, noBtn]));
+
+    var modal = el("div", { class: "modal" }, [head, body]);
+    modal.addEventListener("click", function (e) { e.stopPropagation(); });
+    var backdrop = el("div", { class: "modal-backdrop" }, [modal]);
+    backdrop.addEventListener("click", cancelDeleteShow);
+    host.appendChild(backdrop);
+    pw.focus();
+  }
+
+  // CSVs are (re)ingested synchronously right before regenerate() runs, so
+  // meta.generatedAt doubles as "when the currently-loaded CSVs were loaded".
+  function buildLoadedInfo() {
+    return el("div", { class: "loadedinfo" }, ["CSVs loaded: " + fmtDate(state.result.meta.generatedAt)]);
+  }
+
+  function buildRegToolbar() {
+    var search = el("input", { type: "search", placeholder: "Search name, club, email…", value: state.search });
+    search.addEventListener("input", function () { state.search = search.value; renderRegBody(); });
+
+    var inShowCb = el("input", { type: "checkbox" }); inShowCb.checked = state.inShowFilter;
+    inShowCb.addEventListener("change", function () { state.inShowFilter = inShowCb.checked; renderRegBody(); });
+    var judgeCb = el("input", { type: "checkbox" }); judgeCb.checked = state.judgeFilter;
+    judgeCb.addEventListener("change", function () { state.judgeFilter = judgeCb.checked; renderRegBody(); });
+    var statusGroup = el("span", { class: "statusgroup" }, [
+      el("span", { class: "hint" }, ["Status:"])
+    ].concat(STATUS_BUCKETS.map(function (b) {
+      var cb = el("input", { type: "checkbox" }); cb.checked = state.statusFilter[b.key];
+      cb.addEventListener("change", function () { state.statusFilter[b.key] = cb.checked; renderRegBody(); });
+      return el("label", {}, [cb, document.createTextNode(" " + b.label)]);
+    })).concat([el("label", { title: "Only cars entered in the show (SHW = Yes)" },
+      [inShowCb, document.createTextNode(" In Show")])])
+      .concat([el("label", { title: "Only registrants who volunteered to judge (CSJ = Yes)" },
+      [judgeCb, document.createTextNode(" Judge")])]));
+
+    var prn = el("button", { class: "btn" }, ["🖨 Print"]);
+    prn.addEventListener("click", printRegistration);
+
+    var xls = el("button", { class: "btn" }, ["⬇ Excel"]);
+    xls.addEventListener("click", exportExcel);
+
+    var delBtn = el("button", { class: "btn", id: "regDeleteBtn", disabled: "disabled" }, ["🗑 Delete"]);
+    delBtn.addEventListener("click", openDeleteRegSelectedConfirm);
+
+    var zoomOut = el("button", { class: "btn", title: "Zoom out" }, ["−"]);
+    zoomOut.addEventListener("click", function () { setZoom(state.zoom - 0.1); });
+    var zoomIn = el("button", { class: "btn", title: "Zoom in" }, ["+"]);
+    zoomIn.addEventListener("click", function () { setZoom(state.zoom + 0.1); });
+    var zoomFit = el("button", { class: "btn", title: "Shrink just enough to fit every column on screen" }, ["Fit"]);
+    zoomFit.addEventListener("click", fitZoom);
+    var zoomLabel = el("span", { class: "count", text: Math.round(state.zoom * 100) + "%" });
+    var zoomGroup = el("span", { class: "zoomgroup" }, [zoomOut, zoomLabel, zoomIn, zoomFit]);
+
+    var count = el("span", { class: "count", id: "rowcount" });
+    return el("div", { class: "toolbar no-print" },
+      [search, statusGroup, count, el("span", { class: "spacer" }), zoomGroup, xls, delBtn, prn]);
+  }
+  function buildSummaryToolbar() {
+    var xls = el("button", { class: "btn" }, ["⬇ Excel"]);
+    xls.addEventListener("click", exportExcel);
+    return el("div", { class: "toolbar no-print" }, [el("span", { class: "spacer" }), xls]);
+  }
+
+  // ---------- Excel export ----------
+  // The full dataset, not the filtered view: the export stands in for the
+  // workbook this app replaced, and that workbook always held everything.
+  function exportExcel() {
+    if (!state.result || !state.result.ok) return;
+    var wb = window.VetteFestExcel.build(ExcelJS, state.result);
+    wb.xlsx.writeBuffer().then(function (buf) {
+      var blob = new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+      var url = URL.createObjectURL(blob);
+      var a = el("a", { href: url, download: (state.result.meta.title || "VetteFest") + ".xlsx" });
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+    });
+  }
+
+  // ---------- print ----------
+  // The on-screen table collapses 12 shirt columns into one summary column
+  // and only shows what's currently sorted/searched — printing should still
+  // give a complete paper record, so this builds a separate print-only table.
+  function clearPrintHost() { var host = $("#printHost"); if (host) host.innerHTML = ""; }
+
+  // Shared logo + centered title header, and a report-date footer, used by
+  // every print report below so they all look like one consistent document.
+  // Real "Page n of m" numbering isn't something the app can compute —
+  // browsers don't expose a total page count to print CSS/JS — so that's left
+  // to the browser's own print dialog "Headers and footers" option.
+  function buildPrintHeader(title) {
+    var headerLogo = $("header.app img.hdr-logo");
+    var kids = [];
+    if (headerLogo) kids.push(el("img", { src: headerLogo.src, class: "print-logo", alt: "ETCC Logo" }));
+    kids.push(el("h2", { text: title }));
+    return el("div", { class: "print-report-head" }, kids);
+  }
+  function buildPrintFooter() {
+    return el("div", { class: "print-report-foot", text: "Report Date: " + fmtDate(new Date()) });
+  }
+
+  function printRegistration() {
+    var host = $("#printHost");
+    host.innerHTML = "";
+    // Every column except the 12 individual shirt buckets, which are replaced
+    // by the same "Shirts" summary column the on-screen table uses.
+    var cols = state.result.columns.filter(function (c) { return !isShirtCol(c); });
+    var headerLabels = cols.concat(["Shirts"]);
+    var thead = el("thead", {}, [el("tr", {}, headerLabels.map(function (c) { return el("th", {}, [c]); }))]);
+    var tbody = el("tbody", {}, visibleRows().map(function (r) {
+      var cells = cols.map(function (c) {
+        var v = CURRENCY_COLS[c] ? fmtMoney(r[c]) : DATE_COLS[c] ? fmtCsvDate(r[c]) : r[c];
+        return el("td", {}, [v == null ? "" : String(v)]);
+      });
+      cells.push(el("td", { class: "shirtsum" }, [shirtSummaryText(r)]));
+      return el("tr", {}, cells);
+    }));
+    host.appendChild(buildPrintHeader(state.result.meta.title));
+    host.appendChild(el("table", { class: "grid" }, [thead, tbody]));
+    host.appendChild(buildPrintFooter());
+    window.print();
+  }
+
+  // Base (non-shirt) columns, plus one "Shirts" summary column standing in for
+  // the 12 individual buckets (almost always zero) — this is what shrinks the
+  // table enough to avoid horizontal scrolling for most rows. The Excel export
+  // is unaffected and still lists every bucket, since that detail matters for
+  // ordering shirts even though it's noise on screen.
+  function visibleColumns() {
+    var base = state.result.columns.filter(function (c) { return !isShirtCol(c); });
+    base.push(SHIRTS_COL);
+    return base;
+  }
+
+  function buildRegView() {
+    var cols = visibleColumns();
+    var thead = el("thead"), htr = el("tr");
+
+    var selectAllCb = el("input", { type: "checkbox", id: "regSelectAll", title: "Select all" });
+    selectAllCb.addEventListener("change", function () { toggleSelectAllReg(selectAllCb.checked); });
+    htr.appendChild(el("th", { class: "no-print" + pinnedClass(0) }, [selectAllCb]));
+
+    cols.forEach(function (c, idx) {
+      var label = c === SHIRTS_COL ? "Shirts" : c;
+      var arrow = state.sortCol === c ? (state.sortDir === 1 ? " ▲" : " ▼") : "";
+      var th = el("th", { class: (c === SHIRTS_COL ? "shirtsum" : (isNumericCol(c) ? "num" : "")) +
+          (NARROW_HEADER_COLS[c] ? " narrow-hdr" : "") + pinnedClass(idx + 1) },
+        [label, el("span", { class: "arrow", text: arrow })]);
+      if (c === "SHW") th.title = "In the car show";
+      if (c === "CSJ") th.title = "Volunteered to be a judge";
+      th.addEventListener("click", function () {
+        if (state.sortCol === c) state.sortDir = -state.sortDir; else { state.sortCol = c; state.sortDir = 1; }
+        renderViews();
+      });
+      htr.appendChild(th);
+    });
+    thead.appendChild(htr);
+    var table = el("table", { class: "grid" }, [thead, el("tbody", { id: "regbody" })]);
+    var wrap = el("div", { class: "tablewrap", style: "zoom:" + state.zoom }, [table]);
+    setTimeout(function () {
+      renderRegBody();
+      if (!state.zoomAutoFitDone) { state.zoomAutoFitDone = true; fitZoom(); }
+    }, 0);
+    return wrap;
+  }
+
+  // ---------- pinned columns (checkbox + Reg # + names stay visible while scrolling) ----------
+  // Each pinned cell is `position: sticky`; every one after the first needs
+  // its `left` set to the summed rendered width of the pinned cells before
+  // it, or they'd all sit at left:0 and overlap each other.
+  var PINNED_COUNT = 4; // checkbox, Reg #, Last Name, First Name(s)
+  function pinnedClass(idx) {
+    return idx < PINNED_COUNT ? " pinned pin-" + (idx + 1) : "";
+  }
+  function updatePinnedOffsets() {
+    var table = $(".tablewrap table.grid");
+    var headRow = table && table.querySelector("thead tr");
+    if (!headRow) return;
+    // getBoundingClientRect is in post-zoom (visual) px; the `zoom` CSS
+    // property re-scales inline-style lengths too, so divide back out or the
+    // offset would be applied twice.
+    var offset = 0;
+    for (var i = 0; i < PINNED_COUNT; i++) {
+      var cell = headRow.children[i];
+      if (!cell) break;
+      var cells = table.querySelectorAll(".pin-" + (i + 1));
+      for (var j = 0; j < cells.length; j++) cells[j].style.left = offset + "px";
+      offset += cell.getBoundingClientRect().width / state.zoom;
+    }
+  }
+
+  // ---------- zoom ----------
+  function setZoom(z) {
+    state.zoom = Math.max(0.3, Math.min(1.5, z));
+    renderViews();
+  }
+  // Measure how wide the table naturally wants to be vs. how much room is
+  // actually available, and pick a zoom level that makes every column fit —
+  // instead of making the user guess a percentage via the +/− buttons.
+  function fitZoom() {
+    var wrap = $(".tablewrap");
+    var table = wrap && wrap.querySelector("table.grid");
+    if (!wrap || !table) return;
+    var availableWidth = wrap.parentElement.clientWidth; // not itself zoomed
+    var priorZoom = wrap.style.zoom;
+    wrap.style.zoom = "1"; // measure at true scale, independent of current zoom
+    var naturalWidth = table.scrollWidth;
+    wrap.style.zoom = priorZoom;
+    if (!naturalWidth) return;
+    setZoom(availableWidth / naturalWidth);
+  }
+
+  function allRegistrations() {
+    return state.result ? state.result.registrations : [];
+  }
+
+  // ---------- Registration tab row selection + bulk delete ----------
+  function selectedRegKeys() { return Object.keys(state.regSelected); }
+  function setRegSelected(key, checked) {
+    if (checked) state.regSelected[key] = true; else delete state.regSelected[key];
+  }
+  function toggleSelectAllReg(checked) {
+    visibleRows().forEach(function (r) { setRegSelected(rowKey(r), checked); });
+    renderRegBody();
+  }
+  function openDeleteRegSelectedConfirm() {
+    if (!selectedRegKeys().length) return;
+    state.deleteRegSelectedOpen = true;
+    renderDeleteRegSelectedConfirm();
+  }
+  function closeDeleteRegSelectedConfirm() { state.deleteRegSelectedOpen = false; renderDeleteRegSelectedConfirm(); }
+
+  // A CSV-derived row has no per-row server record to delete — instead its
+  // csvRegKey() is added to state.deletedCsvKeys and persisted to
+  // deleted-registrations.json, and regenerate() excludes any matching key
+  // from every future parse, including a fresh re-import that still contains
+  // the same row.
+  function deleteSelectedReg() {
+    var keys = selectedRegKeys();
+    keys.forEach(function (key) { state.deletedCsvKeys[key] = true; });
+    if (keys.length && state.result && state.result.ok) {
+      state.result.registrations = state.result.registrations.filter(function (r) {
+        return !state.deletedCsvKeys[csvRegKey(r)];
+      });
+      pushDeletedRegistrationsToServer(keys);
+    }
+    state.regSelected = {};
+    renderViews();
+  }
+  function pushDeletedRegistrationsToServer(keys) {
+    if (!SITE_CONFIG.deletedRegistrationsApiUrl) return;
+    fetch(SITE_CONFIG.deletedRegistrationsApiUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "add", keys: keys })
+    }).then(function (res) {
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      state.regDeleteSyncError = null;
+    }).catch(function () {
+      state.regDeleteSyncError = "Could not save that deletion to the server — it'll reappear if the page is reloaded before this succeeds. Check your connection and try again.";
+      renderViews();
+    });
+  }
+  // Persists a row's detail-modal edit. Fire-and-forget — the local state and
+  // table already reflect the edit immediately; a failure here just means it
+  // could revert on the next reload if not retried.
+  function pushRegistrationOverrideToServer(key, patch) {
+    if (!SITE_CONFIG.registrationOverridesApiUrl) return;
+    fetch(SITE_CONFIG.registrationOverridesApiUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "upsert", key: key, patch: patch })
+    }).then(function (res) {
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      state.detailEditError = null;
+    }).catch(function () {
+      state.detailEditError = "Could not save that edit to the server — it'll revert if the page is reloaded before this succeeds. Check your connection and try again.";
+      renderViews();
+    });
+  }
+  function pushRegistrationOverrideDeleteToServer(key) {
+    if (!SITE_CONFIG.registrationOverridesApiUrl) return;
+    fetch(SITE_CONFIG.registrationOverridesApiUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "delete", key: key })
+    }).then(function (res) {
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      state.detailEditError = null;
+    }).catch(function () {
+      state.detailEditError = "Could not clear that row's edits on the server — they'll come back if the page is reloaded before this succeeds. Check your connection and try again.";
+      renderViews();
+    });
+  }
+  function renderDeleteRegSelectedConfirm() {
+    var host = $("#confirmHost");
+    if (!host) return;
+    host.innerHTML = "";
+    if (!state.deleteRegSelectedOpen) return;
+
+    var closeBtn = el("button", { class: "btn" }, ["✕"]);
+    closeBtn.addEventListener("click", closeDeleteRegSelectedConfirm);
+    var count = selectedRegKeys().length;
+    var head = el("div", { class: "modal-head" }, [
+      el("h3", { text: "Delete " + count + " Registration" + (count === 1 ? "" : "s") + "?" }),
+      el("span", { class: "spacer" }), closeBtn
+    ]);
+
+    var yesBtn = el("button", { class: "btn primary", style: "background:var(--warn);border-color:var(--red-dark)" }, ["Yes, Delete"]);
+    yesBtn.addEventListener("click", function () { closeDeleteRegSelectedConfirm(); deleteSelectedReg(); });
+    var noBtn = el("button", { class: "btn" }, ["Cancel"]);
+    noBtn.addEventListener("click", closeDeleteRegSelectedConfirm);
+
+    var body = el("div", { class: "modal-body" }, [
+      el("p", {}, ["This removes the " + count + " selected registration" + (count === 1 ? "" : "s") +
+        " from this event going forward — including from a later CSV re-import that still " +
+        "contains the same row. Reg numbers are re-sequenced on the next import. This cannot " +
+        "be undone from the app."]),
+      el("div", { class: "settings-actions" }, [yesBtn, noBtn])
+    ]);
+
+    var modal = el("div", { class: "modal" }, [head, body]);
+    modal.addEventListener("click", function (e) { e.stopPropagation(); });
+    var backdrop = el("div", { class: "modal-backdrop" }, [modal]);
+    backdrop.addEventListener("click", closeDeleteRegSelectedConfirm);
+    host.appendChild(backdrop);
+  }
+
+  function sortedRows() {
+    var rows = allRegistrations().slice();
+    if (state.sortCol) {
+      var c = state.sortCol, dir = state.sortDir;
+      if (c === SHIRTS_COL) {
+        rows.sort(function (a, b) { return (shirtTotal(a) - shirtTotal(b)) * dir; });
+        return rows;
+      }
+      var num = isNumericCol(c);
+      var isDate = !!DATE_COLS[c];
+      rows.sort(function (a, b) {
+        var av = a[c], bv = b[c];
+        if (num) { av = av === "" || av == null ? -Infinity : Number(av); bv = bv === "" || bv == null ? -Infinity : Number(bv); return (av - bv) * dir; }
+        if (isDate) {
+          var ad = av ? new Date(av).getTime() : NaN, bd = bv ? new Date(bv).getTime() : NaN;
+          ad = isNaN(ad) ? -Infinity : ad; bd = isNaN(bd) ? -Infinity : bd;
+          return (ad - bd) * dir;
+        }
+        av = String(av == null ? "" : av).toLowerCase(); bv = String(bv == null ? "" : bv).toLowerCase();
+        return (av < bv ? -1 : av > bv ? 1 : 0) * dir;
+      });
+    }
+    return rows;
+  }
+
+  // The exact set of rows currently on screen, in order — shared by the table
+  // body, the Summary tab, the reports and the detail modal's Prev/Next, so
+  // everything follows the same sort/search state.
+  function visibleRows() {
+    var cols = visibleColumns();
+    var q = state.search.trim().toLowerCase();
+    return sortedRows().filter(function (r) {
+      // "In Show" and "Judge" answer "which cars/registrants", independent of
+      // payment Status — a car entered in the show or a judge volunteer is
+      // relevant regardless of whether that registration is Paid/Not
+      // Paid/Cancelled/Empty, so these two bypass the Status filter entirely
+      // rather than being ANDed with it.
+      if (state.inShowFilter || state.judgeFilter) {
+        if (state.inShowFilter && String(r[CONFIG.carJudgedColumn]).trim().toLowerCase() !== "yes") return false;
+        if (state.judgeFilter && String(r[CONFIG.beAJudgeColumn]).trim().toLowerCase() !== "yes") return false;
+      } else if (!state.statusFilter[classifyStatus(r["Status"])]) {
+        return false;
+      }
+      if (!q) return true;
+      return cols.some(function (c) {
+        var v = c === SHIRTS_COL ? shirtSummaryText(r) : r[c];
+        return String(v == null ? "" : v).toLowerCase().indexOf(q) !== -1;
+      });
+    });
+  }
+
+  function renderRegBody() {
+    if (state.tab !== "reg") return;
+    var body = $("#regbody"); if (!body) return;
+    var cols = visibleColumns();
+    var rows = visibleRows();
+    var frag = document.createDocumentFragment();
+    rows.forEach(function (r) {
+      var key = rowKey(r);
+      var tr = el("tr");
+      tr.title = "Click for full details";
+      tr.addEventListener("click", function () { openDetail(r); });
+
+      var cb = el("input", { type: "checkbox" });
+      cb.checked = !!state.regSelected[key];
+      cb.addEventListener("click", function (e) { e.stopPropagation(); });
+      cb.addEventListener("change", function () { setRegSelected(key, cb.checked); renderRegBody(); });
+      tr.appendChild(el("td", { class: "no-print" + pinnedClass(0) }, [cb]));
+
+      cols.forEach(function (c, idx) {
+        var v, cls = "";
+        if (c === "Email" && r[c]) {
+          var mailLink = el("a", { href: "mailto:" + r[c], text: r[c] });
+          mailLink.addEventListener("click", function (e) { e.stopPropagation(); });
+          tr.appendChild(el("td", { class: pinnedClass(idx + 1).trim() }, [mailLink]));
+          return;
+        }
+        if (c === SHIRTS_COL) { cls = "shirtsum"; v = shirtSummaryText(r); }
+        else if (CURRENCY_COLS[c]) { cls = "num"; v = fmtMoney(r[c]); }
+        else if (DATE_COLS[c]) { v = fmtCsvDate(r[c]); }
+        else if (c === "Phone") { v = fmtPhone(r[c]); }
+        else if (isNumericCol(c)) { cls = "num"; v = r[c]; v = v == null ? "" : v; }
+        else { v = r[c]; }
+        cls += pinnedClass(idx + 1);
+        tr.appendChild(el("td", { class: cls.trim(), text: v == null ? "" : String(v) }));
+      });
+      frag.appendChild(tr);
+    });
+    body.innerHTML = "";
+    body.appendChild(frag);
+    updatePinnedOffsets();
+    var rc = $("#rowcount");
+    if (rc) rc.textContent = rows.length + " of " + allRegistrations().length + " rows shown";
+    var selectAllCb = $("#regSelectAll");
+    if (selectAllCb) {
+      var visibleKeys = rows.map(rowKey);
+      var selectedVisible = visibleKeys.filter(function (k) { return state.regSelected[k]; });
+      selectAllCb.checked = visibleKeys.length > 0 && selectedVisible.length === visibleKeys.length;
+      selectAllCb.indeterminate = selectedVisible.length > 0 && selectedVisible.length < visibleKeys.length;
+    }
+    var delBtn = $("#regDeleteBtn");
+    if (delBtn) {
+      var n = selectedRegKeys().length;
+      delBtn.textContent = "🗑 Delete" + (n ? " (" + n + ")" : "");
+      if (n) delBtn.removeAttribute("disabled"); else delBtn.setAttribute("disabled", "disabled");
+    }
+  }
+
+  // ---------- detail modal ----------
+  // Click any row to see every field for that one registration without
+  // scrolling — grouped into readable sections instead of the table's 30+
+  // side-by-side columns.
+  var DETAIL_SECTIONS = [
+    { title: "Registration", cols: ["Reg Date", "Reg Type", "#", "Status", "Total Fee", "Payment Type", "Check #"] },
+    { title: "Contact", cols: ["Phone", "Email", "Address", "City", "State", "Zip"] },
+    { title: "Corvette", cols: ["Year", "Gen", "Model", "Color", "SHW", "CSJ"] }
+  ];
+  // Reg #, Reg Date, Reg Type and Gen are deliberately excluded: all four are
+  // system/derived values. Gen recomputes automatically if Year changes (see
+  // applyRecordPatch); Reg Type comes from the admission the registrant
+  // actually bought, and "#" is editable right next to it for the cases where
+  // an officer needs to correct a head count. Shirts stay read-only too — a
+  // 12-bucket editor is a separate, bigger task than these plain fields.
+  var EDITABLE_FIELDS = {
+    "Last Name": 1, "First Name(s)": 1, "Club Name": 1, "#": 1,
+    "Status": 1, "Total Fee": 1, "Payment Type": 1, "Check #": 1,
+    "Phone": 1, "Email": 1, "Address": 1, "City": 1, "State": 1, "Zip": 1,
+    "Year": 1, "Model": 1, "Color": 1, "SHW": 1, "CSJ": 1
+  };
+  var INT_EDIT_FIELDS = { "#": 1, "Year": 1 };
+  var NUM_EDIT_FIELDS = { "Total Fee": 1 };
+  var YES_NO_FIELDS = { "SHW": 1, "CSJ": 1 };
+
+  function openDetail(row) { state.detailRow = row; state.detailEditError = null; renderDetailModal(); }
+  function closeDetail() { state.detailRow = null; state.detailEditError = null; renderDetailModal(); }
+  function stepDetail(dir) {
+    var list = visibleRows(), i = list.indexOf(state.detailRow);
+    if (i === -1) return;
+    var next = list[i + dir];
+    if (next) { state.detailRow = next; state.detailEditError = null; renderDetailModal(); }
+  }
+
+  // Builds one <li> for column c — always editable for EDITABLE_FIELDS,
+  // read-only otherwise. Registers editable inputs on fieldEls so
+  // saveDetailEdit() can read every field back out at Save time.
+  function detailFieldItem(r, c, fieldEls) {
+    if (EDITABLE_FIELDS[c]) {
+      var input;
+      if (YES_NO_FIELDS[c]) {
+        input = el("select", {});
+        ["No", "Yes"].forEach(function (v) {
+          var o = el("option", { value: v, text: v });
+          if (String(r[c]) === v) o.setAttribute("selected", "selected");
+          input.appendChild(o);
+        });
+      } else if (c === "Payment Type") {
+        var currentPT = r[c] == null ? "" : String(r[c]);
+        input = el("select", {});
+        [["", "— none —"], ["Cash", "Cash"], ["Check", "Check"], ["Credit Card", "Credit Card"]].forEach(function (pair) {
+          var o = el("option", { value: pair[0], text: pair[1] });
+          if (pair[0] === currentPT) o.setAttribute("selected", "selected");
+          input.appendChild(o);
+        });
+      } else if (c === "Status") {
+        var current = r[c] == null ? "" : String(r[c]);
+        // "Not paid in time limit" is ClubExpress's own wording and shows up
+        // verbatim in real exports — offered here so re-selecting it after an
+        // edit doesn't quietly rewrite it to something else.
+        var opts = ["Paid", "Not Paid", "Not paid in time limit", "Cancelled"];
+        if (current && opts.indexOf(current) === -1) opts.unshift(current);
+        input = el("select", {});
+        opts.forEach(function (v) {
+          var o = el("option", { value: v, text: v });
+          if (v === current) o.setAttribute("selected", "selected");
+          input.appendChild(o);
+        });
+      } else if (NUM_EDIT_FIELDS[c]) {
+        var moneyField = moneyInput({ type: "text", value: r[c] == null ? "" : String(r[c]) });
+        fieldEls[c] = moneyField.input;
+        return li(c, "", moneyField.wrap);
+      } else {
+        input = el("input", { type: "text", value: r[c] == null ? "" : String(r[c]) });
+      }
+      fieldEls[c] = input;
+      return li(c, "", input);
+    }
+    var v = CURRENCY_COLS[c] ? fmtMoney(r[c]) : DATE_COLS[c] ? fmtCsvDate(r[c]) : r[c];
+    return li(c, v == null || v === "" ? "—" : String(v));
+  }
+
+  // targetRow is the record these fieldEls were rendered for, captured at
+  // render time — NOT re-read from state.detailRow when the save actually
+  // fires. The autosave below is debounced 1500ms, so a Prev/Next step (or a
+  // close) can land first; resolving the row late would write the record the
+  // user had been editing on top of whichever one is selected when the timer
+  // fires. Since the patch carries every editable field, that would silently
+  // overwrite a whole registration with another's data.
+  function saveDetailEdit(fieldEls, targetRow) {
+    var r = targetRow || state.detailRow;
+    if (!r) return;
+    var patch = {};
+    Object.keys(EDITABLE_FIELDS).forEach(function (c) {
+      var input = fieldEls[c];
+      if (!input) return;
+      var raw = input.value;
+      if (INT_EDIT_FIELDS[c]) patch[c] = LOGIC.toInt(raw);
+      else if (NUM_EDIT_FIELDS[c]) patch[c] = LOGIC.toNum(raw);
+      else patch[c] = raw.trim();
+    });
+
+    // The row has no per-row server record of its own, so persist just the
+    // patch, keyed by the row's stable identity (see csvRegKey/regenerate()).
+    var key = csvRegKey(r);
+    state.csvOverrides[key] = patch;
+    pushRegistrationOverrideToServer(key, patch);
+    var merged = applyRecordPatch(r, patch);
+    if (state.result && state.result.ok) {
+      state.result.registrations = state.result.registrations.map(function (row) {
+        return csvRegKey(row) === key ? merged : row;
+      });
+    }
+    // Only re-point/redraw the modal when it's still showing the row we just
+    // saved — a late autosave for a row the user has already stepped away
+    // from must persist, but must not yank the modal back to it.
+    if (state.detailRow === r) {
+      state.detailRow = merged;
+      renderDetailModal();
+    }
+    if (state.tab === "reg") renderRegBody();
+  }
+
+  // Throws away every stored edit for this row and rebuilds it from the CSV.
+  function revertDetailOverride() {
+    var r = state.detailRow;
+    if (!r) return;
+    var key = csvRegKey(r);
+    delete state.csvOverrides[key];
+    pushRegistrationOverrideDeleteToServer(key);
+    closeDetail();
+    // Preserve the existing "CSVs loaded:" stamp — this is a re-derive of
+    // already-loaded data, not a fresh import.
+    regenerate(state.result && state.result.meta ? state.result.meta.generatedAt : null);
+  }
+
+  function deleteDetailRow() {
+    var r = state.detailRow;
+    if (!r) return;
+    var key = csvRegKey(r);
+    state.deletedCsvKeys[key] = true;
+    pushDeletedRegistrationsToServer([key]);
+    if (state.result && state.result.ok) {
+      state.result.registrations = state.result.registrations.filter(function (row) {
+        return !state.deletedCsvKeys[csvRegKey(row)];
+      });
+    }
+    closeDetail();
+    renderViews();
+  }
+
+  function renderDetailModal() {
+    var host = $("#detailHost");
+    if (!host) return;
+    host.innerHTML = "";
+    var r = state.detailRow;
+    if (!r) return;
+    var list = visibleRows(), i = list.indexOf(r);
+    var fieldEls = {};
+
+    var closeBtn = el("button", { class: "btn" }, ["✕"]);
+    closeBtn.addEventListener("click", closeDetail);
+    var prevBtn = el("button", { class: "btn" }, ["‹ Prev"]);
+    if (i <= 0) prevBtn.setAttribute("disabled", "disabled");
+    prevBtn.addEventListener("click", function () { stepDetail(-1); });
+    var nextBtn = el("button", { class: "btn" }, ["Next ›"]);
+    if (i === -1 || i >= list.length - 1) nextBtn.setAttribute("disabled", "disabled");
+    nextBtn.addEventListener("click", function () { stepDetail(1); });
+
+    var name = (r["Last Name"] || "") + (r["First Name(s)"] ? ", " + r["First Name(s)"] : "");
+    var head = el("div", { class: "modal-head" }, [
+      el("h3", { text: (r["Reg #"] ? r["Reg #"] + "  " : "") + (name || "Registration") }),
+      el("span", { class: "count", text: i > -1 ? (i + 1) + " of " + list.length : "" }),
+      prevBtn, nextBtn, closeBtn
+    ]);
+
+    var body = el("div", { class: "modal-body" }, [
+      el("ul", { class: "meta-list" }, [
+        li("Reg #", r["Reg #"] || "—"),
+        detailFieldItem(r, "Last Name", fieldEls),
+        detailFieldItem(r, "First Name(s)", fieldEls),
+        detailFieldItem(r, "Club Name", fieldEls)
+      ])
+    ]);
+    DETAIL_SECTIONS.forEach(function (sec) {
+      var cols = sec.cols.filter(function (c) { return state.result.columns.indexOf(c) !== -1; });
+      var items = cols.map(function (c) { return detailFieldItem(r, c, fieldEls); });
+      if (items.length) body.appendChild(el("div", { class: "modal-section" },
+        [el("h4", { text: sec.title }), el("ul", { class: "meta-list" }, items)]));
+    });
+
+    var parts = shirtSummaryParts(r);
+    var shirtItems = parts.length ? parts.map(function (p) { return li(p.label, String(p.qty)); })
+      : [el("li", { class: "hint", text: "No shirts on this registration." })];
+    body.appendChild(el("div", { class: "modal-section" },
+      [el("h4", { text: "Shirts" }), el("ul", { class: "meta-list" }, shirtItems)]));
+
+    var autoSaveDetail = debounce(function () { saveDetailEdit(fieldEls, r); }, 1500);
+    Object.keys(fieldEls).forEach(function (key) {
+      fieldEls[key].addEventListener("input", autoSaveDetail);
+      fieldEls[key].addEventListener("change", autoSaveDetail);
+    });
+
+    var saveBtn = el("button", { class: "btn primary" }, ["Save"]);
+    saveBtn.addEventListener("click", function () { saveDetailEdit(fieldEls, r); });
+    var cancelBtn = el("button", { class: "btn" }, ["Cancel"]);
+    cancelBtn.addEventListener("click", closeDetail);
+    var actions = [saveBtn, cancelBtn];
+    // Only meaningful for a row that actually has stored edits.
+    if (state.csvOverrides[csvRegKey(r)]) {
+      var revertBtn = el("button", { class: "btn" }, ["Revert to CSV"]);
+      revertBtn.addEventListener("click", revertDetailOverride);
+      actions.push(revertBtn);
+    }
+    var delBtn = el("button", { class: "btn", style: "color:var(--warn)" }, ["Delete"]);
+    delBtn.addEventListener("click", deleteDetailRow);
+    actions.push(delBtn);
+    body.appendChild(el("div", { class: "settings-actions" }, actions));
+    if (state.detailEditError) body.appendChild(el("div", { class: "form-error" }, [state.detailEditError]));
+
+    var modal = el("div", { class: "modal" }, [head, body]);
+    modal.addEventListener("click", function (e) { e.stopPropagation(); });
+    var backdrop = el("div", { class: "modal-backdrop" }, [modal]);
+    backdrop.addEventListener("click", closeDetail);
+    host.appendChild(backdrop);
+  }
+
+  // ---------- summary ----------
+  // Laid out to mirror the workbook's SummarySheet section for section
+  // (Registration / Shirts / Car Show / Clubs). Always computed from the full
+  // dataset, independent of the Registration tab's search/status/In Show/
+  // Judge filters — those narrow what an officer is looking at over there,
+  // not what actually happened at the event.
+  function buildSummaryView() {
+    var s = LOGIC.summarizeRecords(allRegistrations(), CONFIG);
+    var m = state.result.meta;
+    var container = el("div", { class: "view" });
+
+    var statusCls = m.errorCount === 0 ? "status good" : "status warn";
+    container.appendChild(el("div", { class: "panel" }, [
+      el("h3", { text: m.title }),
+      el("ul", { class: "meta-list" }, [
+        li("Generated", fmtDate(m.generatedAt) + "  —  ", el("span", { class: statusCls, text: m.statusMessage })),
+        li("Registration file", m.regFileName + "  (" + m.regRows + " rows)"),
+        li("Activity file", m.actFileName ? m.actFileName + "  (" + m.actRows + " rows)" : "— none loaded —"),
+        li("Registrations", String(s.registrations))
+      ])
+    ]));
+
+    // The workbook's three headline figures, in its order.
+    container.appendChild(el("div", { class: "cards" }, [
+      card("Attendees", s.attendees),
+      card("Registrations", s.registrations),
+      card("Funds", fmtMoney(s.funds))
+    ]));
+
+    container.appendChild(el("div", { class: "panel" }, [
+      el("div", { class: "cards stat-cards" }, [
+        el("div", { class: "stat-card" }, [
+          el("div", { class: "stat-card-head", text: "Shirts" }),
+          shirtMatrix(s.shirtTotals)
+        ]),
+        el("div", { class: "stat-card" }, [
+          el("div", { class: "stat-card-head", text: "Admissions" }),
+          admissionMatrix(s)
+        ])
+      ])
+    ]));
+
+    var clubRows = s.clubs.map(function (c) {
+      return el("tr", {}, [el("td", { class: "lbl", text: c.name }), el("td", { text: String(c.attendees) })]);
+    });
+    container.appendChild(el("div", { class: "panel" }, [
+      el("div", { class: "cards stat-cards" }, [
+        el("div", { class: "stat-card" }, [
+          el("div", { class: "stat-card-head", text: "Car Show" }),
+          el("div", { style: "margin-bottom:8px" }, ["Judges volunteering: " + s.judges]),
+          genMatrix(s)
+        ]),
+        el("div", { class: "stat-card" }, [
+          el("div", { class: "stat-card-head", text: "Clubs" }),
+          el("table", { class: "matrix" }, [
+            el("thead", {}, [el("tr", {}, [el("th", { class: "lbl", text: "Club" }), el("th", { text: "Attendees" })])]),
+            el("tbody", {}, clubRows)
+          ])
+        ])
+      ])
+    ]));
+
+    if (state.result.messages.length) {
+      container.appendChild(el("div", { class: "panel" }, [
+        el("h3", { text: "Messages (" + state.result.messages.length + ")" }),
+        el("ul", { class: "messages" }, state.result.messages.map(function (x) { return el("li", { text: x }); }))
+      ]));
+    }
+    return container;
+  }
+  function li(k, v, extra) {
+    var kids = [el("span", { class: "k", text: k }), document.createTextNode(v)];
+    if (extra) kids.push(extra);
+    return el("li", {}, kids);
+  }
+  function card(k, v) { return el("div", { class: "card" }, [el("div", { class: "k", text: k }), el("div", { class: "v", text: String(v) })]); }
+
+  // Size × Free/Xtra, with a row-wise Total column and a column-wise Total
+  // footer row. Shared by the Summary tab, the T-Shirts tab and the printed
+  // Summary report, so all three present the same figures the same way.
+  function shirtMatrix(totals) {
+    var C = CONFIG;
+    var head = el("tr", {}, [el("th", { class: "lbl", text: "Size" })].concat(
+      C.GROUPS.map(function (g) { return el("th", { text: g.label }); })
+    ).concat([el("th", { text: "Total" })]));
+
+    var colTotals = C.GROUPS.map(function () { return 0; });
+    var grand = 0;
+    var bodyRows = C.SIZES.map(function (sz) {
+      var rowTotal = 0;
+      var cells = [el("td", { class: "lbl", text: sz.label })];
+      C.GROUPS.forEach(function (g, i) {
+        var v = totals[g.key + sz.key] || 0;
+        colTotals[i] += v;
+        rowTotal += v;
+        cells.push(el("td", { class: v ? "" : "z", text: String(v) }));
+      });
+      grand += rowTotal;
+      cells.push(el("td", { class: rowTotal ? "" : "z", text: String(rowTotal) }));
+      return el("tr", {}, cells);
+    });
+    var footCells = [el("td", { class: "lbl", text: "Total" })];
+    colTotals.forEach(function (t) { footCells.push(el("td", { style: "font-weight:600", text: String(t) })); });
+    footCells.push(el("td", { style: "font-weight:600", text: String(grand) }));
+    bodyRows.push(el("tr", {}, footCells));
+
+    return el("table", { class: "matrix" }, [el("thead", {}, [head]), el("tbody", {}, bodyRows)]);
+  }
+
+  // Which admission each registration bought, and what it brought in — the
+  // breakdown behind the Attendees and Funds cards above.
+  function admissionMatrix(s) {
+    var head = el("tr", {}, [
+      el("th", { class: "lbl", text: "Admission" }), el("th", { text: "Fee" }),
+      el("th", { text: "Count" }), el("th", { text: "Attendees" })
+    ]);
+    var totalCount = 0, totalAttendees = 0;
+    var rows = s.admissions.map(function (a) {
+      var attendees = a.count * a.attendees;
+      totalCount += a.count;
+      totalAttendees += attendees;
+      return el("tr", {}, [
+        el("td", { class: "lbl", text: a.title }),
+        el("td", { text: fmtMoney(a.fee) }),
+        el("td", { class: a.count ? "" : "z", text: String(a.count) }),
+        el("td", { class: attendees ? "" : "z", text: String(attendees) })
+      ]);
+    });
+    rows.push(el("tr", {}, [
+      el("td", { class: "lbl", text: "Total" }),
+      el("td", { text: "" }),
+      el("td", { style: "font-weight:600", text: String(totalCount) }),
+      el("td", { style: "font-weight:600", text: String(totalAttendees) })
+    ]));
+    return el("table", { class: "matrix" }, [el("thead", {}, [head]), el("tbody", {}, rows)]);
+  }
+
+  function genMatrix(s) {
+    var head = el("tr", {}, [
+      el("th", { class: "lbl", text: "Generation" }), el("th", { text: "Years" }),
+      el("th", { text: "At Event" }), el("th", { text: "In Car Show" })
+    ]);
+    var totalAtEvent = 0, totalInCarShow = 0;
+    var body = s.gens.map(function (g) {
+      totalAtEvent += g.atEvent;
+      totalInCarShow += g.inCarShow;
+      return el("tr", {}, [
+        el("td", { class: "lbl", text: g.gen }),
+        el("td", { text: g.from + "–" + g.to }),
+        el("td", { class: g.atEvent ? "" : "z", text: String(g.atEvent) }),
+        el("td", { class: g.inCarShow ? "" : "z", text: String(g.inCarShow) })
+      ]);
+    });
+    body.push(el("tr", {}, [
+      el("td", { class: "lbl", text: "Total" }),
+      el("td", { text: "" }),
+      el("td", { style: "font-weight:600", text: String(totalAtEvent) }),
+      el("td", { style: "font-weight:600", text: String(totalInCarShow) })
+    ]));
+    return el("table", { class: "matrix" }, [el("thead", {}, [head]), el("tbody", {}, body)]);
+  }
+
+  // ---------- T-Shirts tab ----------
+  // Shirt totals scoped to registrations whose Status classifies as "paid" —
+  // shared by the on-screen "needed for the event" matrix and the order
+  // email, so both agree on what "how many shirts do we actually order"
+  // means: don't count someone who never completed payment. Deliberately NOT
+  // filtered by the Registration tab's own status checkboxes, which default
+  // to showing everything.
+  function paidShirtTotals() {
+    var paidRows = allRegistrations().filter(function (r) { return classifyStatus(r["Status"]) === "paid"; });
+    return LOGIC.summarizeRecords(paidRows, CONFIG).shirtTotals;
+  }
+
+  // Plain text (not HTML) — vettefest_send_mail() only sends text/plain, and
+  // a plain-text preview is trivially exact: what's shown is byte-for-byte
+  // what gets sent, with no separate HTML-rendering path to drift from it.
+  function buildTshirtOrderEmailBody() {
+    var totals = paidShirtTotals();
+    var title = state.result && state.result.ok ? state.result.meta.title : CONFIG.title;
+    var lines = [title.replace(/ Registration List$/, "") + " — T-Shirt Order", ""];
+    lines.push("SHIRT COUNTS (paid registrations, by size)");
+    var grand = 0;
+    CONFIG.SIZES.forEach(function (sz) {
+      var parts = CONFIG.GROUPS.map(function (g) {
+        var v = totals[g.key + sz.key] || 0;
+        grand += v;
+        return g.label + ": " + v;
+      });
+      var rowTotal = CONFIG.GROUPS.reduce(function (sum, g) { return sum + (totals[g.key + sz.key] || 0); }, 0);
+      lines.push("  " + sz.label + " — " + parts.join(", ") + "  (total " + rowTotal + ")");
+    });
+    lines.push("");
+    lines.push("TOTAL SHIRTS: " + grand);
+    return lines.join("\n");
+  }
+
+  function sendTshirtOrderEmail() {
+    if (!SITE_CONFIG.sendTshirtOrderEmailApiUrl) return;
+    if (!state.emailTo) {
+      state.emailSendError = "No recipient set — type a To address, or add one in Developer > Settings first.";
+      renderTshirtOrderPage();
+      return;
+    }
+    state.emailSending = true;
+    state.emailSendError = null;
+    state.emailSent = false;
+    renderTshirtOrderPage();
+    fetch(SITE_CONFIG.sendTshirtOrderEmailApiUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ to: state.emailTo, subject: state.emailSubject, body: state.emailBody, cc: state.emailCc, bcc: state.emailBcc })
+    }).then(function (res) { return res.json().then(function (data) { return { ok: res.ok, data: data }; }); })
+      .then(function (r) {
+        state.emailSending = false;
+        if (r.ok && r.data && r.data.ok) state.emailSent = true;
+        else state.emailSendError = (r.data && r.data.error) || "Send failed.";
+        renderTshirtOrderPage();
+      })
+      .catch(function () {
+        state.emailSending = false;
+        state.emailSendError = "Could not send — check your connection and try again.";
+        renderTshirtOrderPage();
+      });
+  }
+
+  function buildTshirtView() {
+    var wrap = el("div", { class: "view tshirt-view" });
+
+    if (state.result && state.result.ok) {
+      wrap.appendChild(el("div", { class: "panel" }, [
+        el("div", { class: "cards stat-cards" }, [
+          el("div", { class: "stat-card" }, [
+            el("div", { class: "stat-card-head", text: "Shirts Needed For Event" }),
+            el("div", { style: "font-size:11px; color:var(--muted); margin:-6px 0 8px",
+              text: "Paid registrations only — ignores the Registration tab's status filters" }),
+            shirtMatrix(paidShirtTotals())
+          ])
+        ])
+      ]));
+    } else {
+      wrap.appendChild(el("div", { class: "empty-state" },
+        ["No registration data loaded yet — import a CSV pair to see shirt counts."]));
+    }
+
+    var orderBtn = el("button", { class: "btn primary" }, ["📧 T-Shirt Order Form"]);
+    orderBtn.addEventListener("click", openTshirtOrderPage);
+    var reportBtn = el("button", { class: "btn" }, ["📊 T-Shirt Report"]);
+    reportBtn.addEventListener("click", printTshirtReport);
+    wrap.appendChild(el("div", { class: "panel" }, [
+      el("div", { class: "settings-actions" }, [orderBtn, reportBtn])
+    ]));
+
+    return wrap;
+  }
+
+  function printTshirtReport() {
+    if (!state.result || !state.result.ok) return;
+    var host = $("#printHost");
+    host.innerHTML = "";
+
+    var paidRecs = allRegistrations().filter(function (r) {
+      return classifyStatus(r["Status"]) === "paid" && shirtTotal(r) > 0;
+    }).sort(function (a, b) {
+      var aLast = String(a["Last Name"] || "").toLowerCase();
+      var bLast = String(b["Last Name"] || "").toLowerCase();
+      if (aLast !== bLast) return aLast < bLast ? -1 : 1;
+      var aFirst = String(a["First Name(s)"] || "").toLowerCase();
+      var bFirst = String(b["First Name(s)"] || "").toLowerCase();
+      return aFirst < bFirst ? -1 : aFirst > bFirst ? 1 : 0;
+    });
+    var rows = paidRecs.map(function (r) {
+      return el("tr", {}, [
+        el("td", { text: r["Reg #"] || "—" }),
+        el("td", { text: r["Last Name"] || "—" }),
+        el("td", { text: r["First Name(s)"] || "—" }),
+        el("td", { text: shirtSummaryText(r) || "—" })
+      ]);
+    });
+
+    host.appendChild(buildPrintHeader("T-Shirt Report"));
+    host.appendChild(el("table", { class: "grid report-table centered-report-table" }, [
+      el("thead", {}, [el("tr", {}, [
+        el("th", { text: "Reg #" }), el("th", { text: "Last Name" }),
+        el("th", { text: "First Name(s)" }), el("th", { text: "Shirts" })
+      ])]),
+      el("tbody", {}, rows)
+    ]));
+    host.appendChild(el("div", { class: "panel", style: "margin-top:14px; max-width:420px" }, [
+      el("div", { class: "stat-card-head", text: "Totals" }),
+      shirtMatrix(paidShirtTotals())
+    ]));
+    host.appendChild(buildPrintFooter());
+    window.print();
+  }
+
+  // ---------- Page banner helper (shared by all full-page overlays) ----------
+  // Single-line banner: Back button + logo on the left, "Vette Fest Manager"
+  // (plus an optional pageTitle sub-line naming the specific screen) centered
+  // — grid layout so the title stays centered regardless of the left
+  // content's width. printCallback is optional; when given, a "🖨 Print"
+  // button appears in the banner's upper-right corner.
+  function buildPageBanner(closeCallback, pageTitle, printCallback) {
+    var headerLogo = $("header.app img.hdr-logo");
+    var logoImg = headerLogo ? el("img", { src: headerLogo.src, style: "height:40px" }) : null;
+    var leftKids = [];
+    if (closeCallback) {
+      var closeBtn = el("button", { class: "btn" }, ["← Back"]);
+      closeBtn.addEventListener("click", closeCallback);
+      leftKids.push(closeBtn);
+    }
+    if (logoImg) leftKids.push(logoImg);
+    var centerKids = [el("h2", { text: "Vette Fest Manager", style: "margin: 0" })];
+    if (pageTitle) centerKids.push(el("h3", { text: pageTitle, style: "margin: 4px 0 0; color: var(--muted); font-weight: 600" }));
+    var rightKids = [];
+    if (printCallback) {
+      var printBtn = el("button", { class: "btn" }, ["🖨 Print"]);
+      printBtn.addEventListener("click", printCallback);
+      rightKids.push(printBtn);
+    }
+    return el("div", { class: "api-page-head", style: "display: grid; grid-template-columns: 1fr auto 1fr; align-items: center" }, [
+      el("div", { style: "display: flex; align-items: center; gap: 10px; justify-self: start" }, leftKids),
+      el("div", { style: "justify-self: center; text-align: center" }, centerKids),
+      el("div", { style: "justify-self: end" }, rightKids)
+    ]);
+  }
+
+  // ---------- T-Shirt Order Form (full-page screen) ----------
+  function openTshirtOrderPage() {
+    if (!state.emailTo) state.emailTo = state.appSettings.tshirtVendorEmail || "";
+    if (!state.emailSubject) state.emailSubject = state.appSettings.tshirtOrderSubject || "ETCC Vette Fest — T-Shirt Order";
+    if (!state.emailBody) state.emailBody = buildTshirtOrderEmailBody();
+    state.tshirtOrderPageOpen = true;
+    renderTshirtOrderPage();
+  }
+  function closeTshirtOrderPage() { state.tshirtOrderPageOpen = false; renderTshirtOrderPage(); }
+
+  function renderTshirtOrderPage() {
+    var host = $("#tshirtOrderHost");
+    if (!host) return;
+    host.innerHTML = "";
+    if (!state.tshirtOrderPageOpen) return;
+
+    var head = buildPageBanner(closeTshirtOrderPage, "T-Shirt Order Form");
+    var body = el("div", { class: "api-page-inner" });
+
+    var toInput = el("input", { type: "text", value: state.emailTo || "", placeholder: "email@example.com" });
+    toInput.addEventListener("input", function () { state.emailTo = toInput.value; });
+    body.appendChild(el("div", { class: "form-row" }, [el("span", { class: "form-label", text: "To" }), toInput]));
+    if (!state.emailTo) {
+      body.appendChild(el("div", { class: "form-error", text: "No Vendor Email set — add one in Developer > Settings > T-Shirt Vendor, or type a recipient above." }));
+    }
+
+    var subjectInput = el("input", { type: "text", value: state.emailSubject || "" });
+    subjectInput.addEventListener("input", function () { state.emailSubject = subjectInput.value; });
+    body.appendChild(el("div", { class: "form-row" }, [el("span", { class: "form-label", text: "Subject" }), subjectInput]));
+
+    var ccInput = el("input", { type: "text", value: state.emailCc || "", placeholder: "email@example.com" });
+    ccInput.addEventListener("input", function () { state.emailCc = ccInput.value; });
+    body.appendChild(el("div", { class: "form-row" }, [el("span", { class: "form-label", text: "CC" }), ccInput]));
+
+    var bccInput = el("input", { type: "text", value: state.emailBcc || "", placeholder: "email@example.com" });
+    bccInput.addEventListener("input", function () { state.emailBcc = bccInput.value; });
+    body.appendChild(el("div", { class: "form-row" }, [el("span", { class: "form-label", text: "BCC" }), bccInput]));
+
+    var rebuildBtn = el("button", { class: "btn" }, ["↻ Rebuild from current data"]);
+    rebuildBtn.addEventListener("click", function () {
+      state.emailBody = buildTshirtOrderEmailBody();
+      renderTshirtOrderPage();
+    });
+
+    var bodyTextarea = el("textarea", { rows: "24", style: "width:100%; font-family:monospace; font-size:13px; padding:8px; border:1px solid #ccc; resize:vertical" });
+    bodyTextarea.value = state.emailBody || "";
+    bodyTextarea.addEventListener("input", function () { state.emailBody = bodyTextarea.value; });
+    body.appendChild(el("div", { class: "form-group" }, [
+      el("label", { text: "Message Body (editable):" }),
+      bodyTextarea,
+      el("div", { class: "settings-actions" }, [rebuildBtn])
+    ]));
+
+    var sendBtn = el("button", { class: "btn primary" }, [state.emailSending ? "Sending…" : "Send"]);
+    if (state.emailSending || !state.emailTo) sendBtn.setAttribute("disabled", "disabled");
+    sendBtn.addEventListener("click", sendTshirtOrderEmail);
+    var actionRow = el("div", { class: "settings-actions" }, [sendBtn]);
+    if (state.emailSent) actionRow.appendChild(el("div", { class: "test-summary good", text: "Sent!" }));
+    if (state.emailSendError) actionRow.appendChild(el("div", { class: "form-error", text: state.emailSendError }));
+    body.appendChild(actionRow);
+
+    var page = el("div", { class: "api-page" }, [head, el("div", { class: "api-page-body" }, [body])]);
+    host.appendChild(page);
+  }
+
+  // ---------- Reports tab ----------
+  // A launcher straight into print preview — no intermediate on-screen page,
+  // each button just builds its report into #printHost and calls
+  // window.print() directly.
+  function buildReportsView() {
+    var summaryBtn = el("button", { class: "btn" }, ["📊 Vette Fest Summary Report"]);
+    summaryBtn.addEventListener("click", printSummaryReport);
+    var regBtn = el("button", { class: "btn" }, ["📋 Registration Report"]);
+    regBtn.addEventListener("click", printRegistrationReport);
+    var showBtn = el("button", { class: "btn" }, ["🏁 Car Show Report"]);
+    showBtn.addEventListener("click", printCarShowReport);
+    var tshirtBtn = el("button", { class: "btn" }, ["👕 T-Shirt Report"]);
+    tshirtBtn.addEventListener("click", printTshirtReport);
+    var buttonCol = el("div", { class: "settings-actions", style: "flex-direction: column; align-items: flex-start" },
+      [summaryBtn, regBtn, showBtn, tshirtBtn]);
+    var row = el("div", { class: "reports-row" }, []);
+    if (window.__vettefestReportsBanner) {
+      row.appendChild(el("img", { src: window.__vettefestReportsBanner, class: "reports-banner", alt: "Reports" }));
+    }
+    row.appendChild(buttonCol);
+    return el("div", { class: "view reports-view" }, [
+      el("div", { class: "panel" }, [el("h3", { text: "Reports" }), row])
+    ]);
+  }
+
+  // Reuses buildSummaryView() verbatim (the same panels the Summary tab
+  // shows on screen), cloned into #printHost, so this report can never drift
+  // out of sync with what the Summary tab actually displays.
+  function printSummaryReport() {
+    if (!state.result || !state.result.ok) return;
+    var host = $("#printHost");
+    host.innerHTML = "";
+    host.appendChild(buildPrintHeader("Vette Fest Summary Report"));
+    host.appendChild(buildSummaryView());
+    host.appendChild(buildPrintFooter());
+    window.print();
+  }
+
+  // Reg # / names / club / admission / shirts, always sorted by Reg # —
+  // scoped to the Registration tab's current search/status filters, same as
+  // its on-screen table.
+  function printRegistrationReport() {
+    if (!state.result || !state.result.ok) return;
+    var host = $("#printHost");
+    host.innerHTML = "";
+    var rows = visibleRows().slice().sort(function (a, b) {
+      return String(a["Reg #"]) < String(b["Reg #"]) ? -1 : 1;
+    });
+    var thead = el("thead", {}, [el("tr", {}, [
+      el("th", { text: "Reg #" }), el("th", { text: "Last Name" }), el("th", { text: "First Name(s)" }),
+      el("th", { text: "Club Name" }), el("th", { text: "Admission" }), el("th", { text: "#" }),
+      el("th", { text: "Shirts" })
+    ])]);
+    var tbody = el("tbody", {}, rows.map(function (r) {
+      return el("tr", {}, [
+        el("td", { text: r["Reg #"] || "" }),
+        el("td", { text: r["Last Name"] || "" }),
+        el("td", { text: r["First Name(s)"] || "" }),
+        el("td", { text: r["Club Name"] || "" }),
+        el("td", { text: r["Reg Type"] || "" }),
+        el("td", { text: String(r["#"] == null ? "" : r["#"]) }),
+        el("td", { class: "shirtsum", text: shirtSummaryText(r) })
+      ]);
+    }));
+    host.appendChild(buildPrintHeader("Registration Report"));
+    host.appendChild(el("table", { class: "grid report-table" }, [thead, tbody]));
+    host.appendChild(buildPrintFooter());
+    window.print();
+  }
+
+  // The judging roster: only cars actually entered in the show (SHW = Yes),
+  // grouped by generation — the list the show field is laid out from, which
+  // is why it ignores the Registration tab's In Show checkbox and always
+  // filters for itself.
+  function printCarShowReport() {
+    if (!state.result || !state.result.ok) return;
+    var host = $("#printHost");
+    host.innerHTML = "";
+    var entrants = visibleRows().filter(function (r) {
+      return String(r[CONFIG.carJudgedColumn]).trim().toLowerCase() === "yes";
+    }).sort(function (a, b) {
+      var ag = String(a["Gen"] || "ZZ"), bg = String(b["Gen"] || "ZZ");
+      if (ag !== bg) return ag < bg ? -1 : 1;
+      return String(a["Reg #"]) < String(b["Reg #"]) ? -1 : 1;
+    });
+    var thead = el("thead", {}, [el("tr", {}, [
+      el("th", { text: "Gen" }), el("th", { text: "Reg #" }), el("th", { text: "Last Name" }),
+      el("th", { text: "First Name(s)" }), el("th", { text: "Year" }), el("th", { text: "Model" }),
+      el("th", { text: "Color" }), el("th", { text: "Club Name" })
+    ])]);
+    var tbody = el("tbody", {}, entrants.map(function (r) {
+      return el("tr", {}, [
+        el("td", { text: r["Gen"] || "—" }),
+        el("td", { text: r["Reg #"] || "" }),
+        el("td", { text: r["Last Name"] || "" }),
+        el("td", { text: r["First Name(s)"] || "" }),
+        el("td", { text: String(r["Year"] == null ? "" : r["Year"]) }),
+        el("td", { text: r["Model"] || "" }),
+        el("td", { text: r["Color"] || "" }),
+        el("td", { text: r["Club Name"] || "" })
+      ]);
+    }));
+    host.appendChild(buildPrintHeader("Car Show Report — " + entrants.length + " entries"));
+    host.appendChild(el("table", { class: "grid report-table" }, [thead, tbody]));
+    host.appendChild(buildPrintFooter());
+    window.print();
+  }
+
+  // ---------- dates ----------
+  function parseMaybeDateOnly(d) {
+    if (typeof d === "string" && /^\d{4}-\d{2}-\d{2}$/.test(d)) {
+      var parts = d.split("-");
+      return new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
+    }
+    return d instanceof Date ? d : new Date(d);
+  }
+  function fmtDate(d) {
+    d = parseMaybeDateOnly(d);
+    function p(n) { return (n < 10 ? "0" : "") + n; }
+    var h = d.getHours(), ap = h >= 12 ? "PM" : "AM"; h = h % 12 || 12;
+    return p(d.getMonth() + 1) + "/" + p(d.getDate()) + "/" + d.getFullYear() + " " + p(h) + ":" + p(d.getMinutes()) + " " + ap;
+  }
+
+  // ---------- header menu (hamburger) ----------
+  function buildHeaderMenu() {
+    var header = $("header.app");
+    if (!header) return;
+    var hamburgerBtn = el("button", { id: "hamburgerBtn", class: "hamburger-btn", title: "Menu", "aria-label": "Menu", "aria-expanded": "false" }, [
+      el("span", { class: "bar" }), el("span", { class: "bar" }), el("span", { class: "bar" })
+    ]);
+    hamburgerBtn.addEventListener("click", function (e) { e.stopPropagation(); toggleMenu(); });
+    // Goes inside .hdr-left (before the logo), not header.firstChild — the
+    // header is a 3-column grid and a 4th top-level child would break the
+    // centered title.
+    var hdrLeft = header.querySelector(".hdr-left") || header;
+    hdrLeft.insertBefore(hamburgerBtn, hdrLeft.firstChild);
+
+    var backdrop = el("div", { id: "hdrNavBackdrop", class: "hdr-nav-backdrop" });
+    backdrop.addEventListener("click", closeMenu);
+    var menu = el("div", { id: "hdrMenu", class: "hdr-menu" });
+    document.body.appendChild(backdrop);
+    document.body.appendChild(menu);
+    document.addEventListener("click", closeMenu);
+    renderHeaderMenu();
+  }
+  function toggleMenu() { state.menuOpen = !state.menuOpen; renderHeaderMenu(); }
+  function closeMenu() {
+    if (!state.menuOpen) return;
+    state.menuOpen = false;
+    renderHeaderMenu();
+  }
+
+  // Checks against a SEPARATE Developer password (index.php's
+  // action=dev_login, $DEV_PASSWORD_HASH in secrets.php) — a distinct
+  // credential from the main site login, without ever exposing either hash to
+  // this script. Import Registrations is still independently session-gated
+  // server-side using the MAIN login's session; this step only hides the link
+  // from the menu until the Developer password is entered.
+  function submitDeveloperPassword(password) {
+    return fetch(location.pathname, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: "action=dev_login&password=" + encodeURIComponent(password)
+    }).then(function (res) { return res.json().then(function (data) { return { ok: res.ok, data: data }; }); })
+      .then(function (r) {
+        if (r.ok && r.data && r.data.success) {
+          state.developerUnlocked = true;
+          state.developerLoginOpen = false;
+          state.developerError = null;
+        } else {
+          state.developerError = "Incorrect password.";
+        }
+        renderDeveloperLoginPage();
+        renderHeaderMenu();
+      })
+      .catch(function () {
+        state.developerError = "Could not verify — check your connection and try again.";
+        renderDeveloperLoginPage();
+      });
+  }
+
+  function openDeveloperLogin() {
+    state.developerLoginOpen = true;
+    state.developerError = null;
+    renderDeveloperLoginPage();
+  }
+  function closeDeveloperLogin() { state.developerLoginOpen = false; renderDeveloperLoginPage(); }
+
+  // Same full-screen gradient-card look as _login.html's main site login gate
+  // — an in-app overlay, not the app's usual modal or full-page-banner
+  // treatment, plus a close (✕) button since this is reachable without
+  // leaving the app (the real login page has nothing to "close" back to).
+  function renderDeveloperLoginPage() {
+    var host = $("#developerLoginHost");
+    if (!host) return;
+    host.innerHTML = "";
+    if (!state.developerLoginOpen) return;
+
+    var headerLogo = $("header.app img.hdr-logo");
+    var logoImg = headerLogo ? el("img", { src: headerLogo.src, class: "dev-login-logo", alt: "ETCC Logo" }) : null;
+
+    var closeBtn = el("button", { class: "dev-login-close", title: "Cancel" }, ["✕"]);
+    closeBtn.addEventListener("click", closeDeveloperLogin);
+
+    var pwInput = el("input", { type: "password", class: "dev-login-input", placeholder: "Enter Developer password" });
+    var submit = function () {
+      if (!pwInput.value) return;
+      state.developerVerifying = true;
+      renderDeveloperLoginPage();
+      submitDeveloperPassword(pwInput.value).then(function () { state.developerVerifying = false; });
+    };
+    var goBtn = el("button", { class: "dev-login-btn" }, [state.developerVerifying ? "Checking…" : "Unlock"]);
+    if (state.developerVerifying) goBtn.setAttribute("disabled", "disabled");
+    goBtn.addEventListener("click", submit);
+    pwInput.addEventListener("keydown", function (e) { if (e.key === "Enter") submit(); });
+
+    var kids = [closeBtn];
+    if (logoImg) kids.push(logoImg);
+    kids.push(el("h1", { class: "dev-login-title", text: "Developer Login" }));
+    kids.push(el("p", { class: "dev-login-subtitle" },
+      ["Unlocks Import Registrations, Settings, Regression Tests and the Change Log — " +
+       "a separate password from the main site login."]));
+    kids.push(pwInput);
+    if (state.developerError) kids.push(el("div", { class: "dev-login-error" }, [state.developerError]));
+    kids.push(goBtn);
+    kids.push(el("div", { class: "dev-login-hint" }, [
+      el("a", { href: "dev-forgot-password.php", target: "_blank", rel: "noopener" }, ["Forgot Developer password?"])
+    ]));
+
+    var screen = el("div", { class: "dev-login-screen" }, [el("div", { class: "dev-login-container" }, kids)]);
+    host.appendChild(screen);
+    pwInput.focus();
+  }
+
+  function buildDeveloperMenuItems() {
+    if (state.developerUnlocked) {
+      var importRegs = el("a", { class: "hdr-menu-item", href: "registrations-import.php", target: "_blank", rel: "noopener" }, ["📋 Import Registrations"]);
+      importRegs.addEventListener("click", closeMenu);
+      var settings = el("button", { class: "hdr-menu-item" }, ["⚙ Settings"]);
+      settings.addEventListener("click", function (e) { e.stopPropagation(); closeMenu(); openSettings(); });
+      var regTests = el("button", { class: "hdr-menu-item" }, ["🧪 Run Regression Tests"]);
+      regTests.addEventListener("click", function (e) { e.stopPropagation(); closeMenu(); openTestsPage(); });
+      var changelog = el("button", { class: "hdr-menu-item" }, ["📋 Change Log"]);
+      changelog.addEventListener("click", function (e) { e.stopPropagation(); closeMenu(); openChangelog(); });
+      return [importRegs, settings, regTests, changelog];
+    }
+    var devBtn = el("button", { class: "hdr-menu-item" }, ["🛠 Developer"]);
+    devBtn.addEventListener("click", function (e) { e.stopPropagation(); closeMenu(); openDeveloperLogin(); });
+    return [devBtn];
+  }
+  function renderHeaderMenu() {
+    var menu = $("#hdrMenu");
+    if (!menu) return;
+    var backdrop = $("#hdrNavBackdrop");
+    var btn = $("#hamburgerBtn");
+    menu.classList.toggle("open", state.menuOpen);
+    if (backdrop) backdrop.classList.toggle("open", state.menuOpen);
+    if (btn) {
+      btn.classList.toggle("open", state.menuOpen);
+      btn.setAttribute("aria-expanded", state.menuOpen ? "true" : "false");
+    }
+    menu.innerHTML = "";
+    var logoutItem = el("a", { class: "hdr-menu-item", href: "logout.php" }, ["🚪 Logout"]);
+    logoutItem.addEventListener("click", closeMenu);
+    var items = [];
+    // Only offered when an event is open — from the picker itself there is
+    // nothing to change back to.
+    if (state.currentShow) {
+      var changeShowItem = el("a", { class: "hdr-menu-item", href: "#" }, ["🗓️ Change Event"]);
+      changeShowItem.addEventListener("click", function (e) {
+        e.preventDefault();
+        closeMenu();
+        closeShow();
+      });
+      items.push(changeShowItem);
+    }
+    items = items.concat([logoutItem], buildDeveloperMenuItems());
+    items.forEach(function (it) { menu.appendChild(it); });
+  }
+
+  // ---------- Settings ----------
+  function openSettings() { state.settingsOpen = true; renderSettingsModal(); }
+  function closeSettings() { state.settingsOpen = false; renderSettingsModal(); }
+
+  // Optimistic local update, then push to the server. Every officer viewing
+  // the site picks up the new value on their next page load.
+  function saveAppSettings(patch) {
+    Object.keys(patch).forEach(function (k) { state.appSettings[k] = patch[k]; });
+    state.appSettingsSaving = true;
+    state.appSettingsError = null;
+    state.appSettingsSaved = false;
+    // Deliberately no renderSettingsModal() here: this fires on every field's
+    // blur, and a synchronous full re-render tears down and rebuilds every
+    // input on the page — which steals focus mid-Tab when a user tabs quickly
+    // through several fields, so keystrokes land on a DOM node the browser
+    // already forgot about. Only re-render once the request settles.
+    if (!SITE_CONFIG.appSettingsApiUrl) { state.appSettingsSaving = false; renderSettingsModal(); return; }
+    fetch(SITE_CONFIG.appSettingsApiUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "save", settings: patch })
+    }).then(function (res) {
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      state.appSettingsSaving = false;
+      state.appSettingsSaved = true;
+      renderSettingsModal();
+    }).catch(function () {
+      state.appSettingsSaving = false;
+      state.appSettingsError = "Could not save — check your connection and try again.";
+      renderSettingsModal();
+    });
+  }
+
+  function renderSettingsModal() {
+    var host = $("#settingsHost");
+    if (!host) return;
+    host.innerHTML = "";
+    if (!state.settingsOpen) return;
+
+    var head = buildPageBanner(closeSettings, "Settings");
+    var body = el("div", { class: "api-page-inner" });
+
+    body.appendChild(el("h4", { text: "T-Shirt Vendor" }));
+    body.appendChild(el("div", { class: "hint", style: "margin-bottom:4px" },
+      ["Where the T-Shirts tab's “T-Shirt Order Form” defaults its To address and Subject. " +
+       "Both stay editable per-send on that screen; nothing is ever sent automatically."]));
+    var vendorEmailInput = el("input", { type: "text", value: state.appSettings.tshirtVendorEmail || "" });
+    body.appendChild(el("div", { class: "form-row" }, [el("span", { class: "form-label", text: "Vendor Email" }), vendorEmailInput]));
+    var subjectInput = el("input", { type: "text", value: state.appSettings.tshirtOrderSubject || "" });
+    body.appendChild(el("div", { class: "form-row" }, [el("span", { class: "form-label", text: "Order Email Subject" }), subjectInput]));
+
+    body.appendChild(el("h4", { text: "Event Model" }));
+    body.appendChild(el("div", { class: "hint", style: "margin-bottom:4px" },
+      ["Read-only — these come from the app's build (src/config.js), the same tables the " +
+       "original workbook's ConfigurationSheet held. Changing a price mid-event would " +
+       "silently re-price registrations already imported, so it's a code change on purpose."]));
+    var admTable = el("table", { class: "matrix", style: "max-width:520px" }, [
+      el("thead", {}, [el("tr", {}, [
+        el("th", { class: "lbl", text: "Admission" }), el("th", { text: "Fee" }),
+        el("th", { text: "Attendees" }), el("th", { text: "Free shirt from" })
+      ])]),
+      el("tbody", {}, CONFIG.admissions.map(function (a) {
+        return el("tr", {}, [
+          el("td", { class: "lbl", text: a.title }),
+          el("td", { text: fmtMoney(a.fee) }),
+          el("td", { text: String(a.attendees) }),
+          el("td", { text: a.freeShirtColumn || "— none —" })
+        ]);
+      }))
+    ]);
+    body.appendChild(admTable);
+    body.appendChild(el("div", { class: "hint", style: "margin-top:8px" },
+      ["Extra shirt unit cost: " + fmtMoney(CONFIG.unitCost) + " — a shirt activity's fee " +
+       "divided by this is the quantity ordered."]));
+
+    // Auto-save: every field above saves itself (no Save button) as soon as
+    // it loses focus, building the same full patch each time so unrelated
+    // fields stay in sync with whatever's currently on screen.
+    function autoSaveSettings() {
+      var vendorEmail = vendorEmailInput.value.trim();
+      if (vendorEmail && vendorEmail.split(/[,;]+/).some(function (a) { return a.trim() && a.trim().indexOf("@") === -1; })) {
+        state.appSettingsError = "Vendor Email doesn't look like a valid email address.";
+        renderSettingsModal();
+        return;
+      }
+      saveAppSettings({
+        tshirtVendorEmail: vendorEmail,
+        tshirtOrderSubject: subjectInput.value.trim() || "ETCC Vette Fest — T-Shirt Order"
+      });
+    }
+    [vendorEmailInput, subjectInput].forEach(function (input) { input.addEventListener("blur", autoSaveSettings); });
+
+    var settingsStatus = [];
+    if (state.appSettingsSaving) settingsStatus.push(el("span", { class: "count" }, ["Saving…"]));
+    else if (state.appSettingsSaved) settingsStatus.push(el("span", { class: "count", style: "color:var(--good)" }, ["Saved."]));
+    if (settingsStatus.length) body.appendChild(el("div", { class: "settings-actions" }, settingsStatus));
+    if (state.appSettingsError) body.appendChild(el("div", { class: "form-error" }, [state.appSettingsError]));
+
+    var page = el("div", { class: "api-page" }, [head, el("div", { class: "api-page-body" }, [body])]);
+    host.appendChild(page);
+  }
+
+  // ---------- Regression Tests (full-page screen) ----------
+  // Runs the same fixture-based assertions as test/run-tests.js, entirely in
+  // this tab (src/regression-tests.js + embedded fixture CSVs, both baked into
+  // the build) — it never touches whatever CSVs the user currently has
+  // loaded, since it works on its own copy of reg/act rows.
+  function runRegressionTests() {
+    if (!window.VetteFestRegressionTests || !window.VetteFestFixtures) {
+      state.testResults = { results: [{ label: "Regression test module not available in this build", ok: false, expected: "available", actual: "missing" }], passed: 0, failed: 1 };
+      renderTestsPage();
+      return;
+    }
+    state.testRunning = true;
+    renderTestsPage();
+    var F = window.VetteFestFixtures;
+    var reg = Papa.parse(F.regCsv, { header: true, skipEmptyLines: true }).data;
+    var act = Papa.parse(F.actCsv, { header: true, skipEmptyLines: true }).data;
+    var built = window.VetteFestRegressionTests.assertionList(reg, act);
+    return window.VetteFestRegressionTests.excelAssertionList(built.out, ExcelJS).then(function (excelResults) {
+      var all = built.results.concat(excelResults);
+      var passed = all.filter(function (r) { return r.ok; }).length;
+      state.testResults = { results: all, passed: passed, failed: all.length - passed };
+      state.testRunning = false;
+      renderTestsPage();
+    }).catch(function (err) {
+      state.testResults = { results: built.results.concat([{ label: "Excel round-trip threw", ok: false, expected: "no throw", actual: String(err && err.message || err) }]), passed: 0, failed: 1 };
+      state.testRunning = false;
+      renderTestsPage();
+    });
+  }
+
+  // Selecting "Run Regression Tests" opens this page and immediately kicks
+  // off a run, rather than opening it and making the officer press a button.
+  function openTestsPage() {
+    state.testsPageOpen = true;
+    runRegressionTests();
+  }
+  function closeTestsPage() { state.testsPageOpen = false; renderTestsPage(); }
+
+  function renderTestsPage() {
+    var host = $("#testsHost");
+    if (!host) return;
+    host.innerHTML = "";
+    if (!state.testsPageOpen) return;
+
+    var head = buildPageBanner(closeTestsPage, "Regression Tests");
+
+    var runBtn = el("button", { class: "btn primary" }, [state.testRunning ? "Running…" : "Run Again"]);
+    if (state.testRunning) runBtn.setAttribute("disabled", "disabled");
+    runBtn.addEventListener("click", runRegressionTests);
+
+    var onlyErrCb = el("input", { type: "checkbox" });
+    onlyErrCb.checked = state.testOnlyErrors;
+    onlyErrCb.addEventListener("change", function () { state.testOnlyErrors = onlyErrCb.checked; renderTestsPage(); });
+    var onlyErrLabel = el("label", {}, [onlyErrCb, document.createTextNode(" Only show errors")]);
+
+    var body = el("div", { class: "api-page-inner" });
+    body.appendChild(el("div", { class: "hint", style: "margin-bottom:4px" },
+      ["Runs this app's fixture-based test suite in this tab. It uses its own sample data and never touches whatever CSVs you currently have loaded."]));
+    body.appendChild(el("div", { class: "settings-actions" }, [runBtn, onlyErrLabel]));
+
+    if (state.testResults) {
+      var r = state.testResults;
+      body.appendChild(el("div", { class: "test-summary " + (r.failed === 0 ? "good" : "warn") },
+        [r.passed + " passed, " + r.failed + " failed"]));
+      var shown = state.testOnlyErrors ? r.results.filter(function (t) { return !t.ok; }) : r.results;
+      if (!shown.length) {
+        body.appendChild(el("div", { class: "hint" }, [state.testOnlyErrors ? "No errors — all checks passed." : "No results."]));
+      } else {
+        body.appendChild(el("ul", { class: "test-list" }, shown.map(function (t) {
+          var kids = [(t.ok ? "✓ " : "✗ ") + t.label];
+          if (!t.ok) kids.push(el("div", { class: "expect" }, ["expected " + JSON.stringify(t.expected) + " — got " + JSON.stringify(t.actual)]));
+          return el("li", { class: t.ok ? "pass" : "fail" }, kids);
+        })));
+      }
+    }
+
+    var page = el("div", { class: "api-page" }, [head, el("div", { class: "api-page-body" }, [body])]);
+    host.appendChild(page);
+  }
+
+  // ---------- Change Log ----------
+  // Pulls commit history straight from the public GitHub repo's REST API (no
+  // server endpoint of our own needed). Re-fetched fresh every time it opens.
+  var CHANGELOG_OWNER = "ETCCRepo";
+  var CHANGELOG_REPO = "ETCCVetteFest";
+  var CHANGELOG_FTP = "ftp.etccapps.com → /apps/vettefest/";
+  // Basenames ftp-deploy.sh actually uploads (see that file) — used to count
+  // "Files Deployed" out of the repo's full file tree.
+  var CHANGELOG_DEPLOYED_FILES = [
+    "ETCCVetteFest.html", "_login.html", "index.php", "lib.php", "shows.php",
+    "app-settings.php", "deleted-registrations.php", "registration-overrides.php",
+    "registrations-upload.php", "registrations-import.php", "send-tshirt-order-email.php",
+    "forgot-password.php", "reset-password.php", "dev-forgot-password.php",
+    "dev-reset-password.php", "logout.php", "ETCClogoWhiteBackground.png", ".htaccess"
+  ];
+  var CHANGELOG_TEXT_EXTS = ["html", "js", "css", "md", "php", "json", "txt", "sh", "htaccess"];
+
+  function openChangelog() {
+    state.changelogOpen = true;
+    renderChangelogPage();
+    loadChangelogData();
+  }
+  function closeChangelog() { state.changelogOpen = false; renderChangelogPage(); }
+
+  // Exact total commit count via GitHub's pagination Link header: request one
+  // commit per page, then read the rel="last" page number (= total commits).
+  function fetchTotalCommitCount(base) {
+    return fetch(base + "/commits?per_page=1").then(function (res) {
+      if (!res.ok) return null;
+      var link = res.headers.get("Link");
+      if (link) {
+        var m = link.match(/[?&]page=(\d+)>;\s*rel="last"/);
+        if (m) return parseInt(m[1], 10);
+      }
+      return res.json().then(function (arr) { return Array.isArray(arr) ? arr.length : 0; });
+    }).catch(function () { return null; });
+  }
+
+  function loadChangelogData() {
+    state.changelogLoading = true;
+    state.changelogError = null;
+    renderChangelogPage();
+    var base = "https://api.github.com/repos/" + CHANGELOG_OWNER + "/" + CHANGELOG_REPO;
+    var commits, fileCount = "—", deployedCount = "—";
+
+    Promise.all([
+      fetch(base + "/commits?per_page=100"),
+      fetch(base + "/git/trees/HEAD?recursive=1")
+    ]).then(function (results) {
+      var commitsRes = results[0], treeRes = results[1];
+      if (!commitsRes.ok) throw new Error("GitHub API error: " + commitsRes.status);
+      return commitsRes.json().then(function (c) {
+        commits = c;
+        if (!treeRes.ok) return [];
+        return treeRes.json().then(function (tree) {
+          var blobs = (tree.tree || []).filter(function (n) { return n.type === "blob"; });
+          fileCount = blobs.length;
+          deployedCount = blobs.filter(function (n) {
+            return CHANGELOG_DEPLOYED_FILES.indexOf(n.path.split("/").pop()) !== -1;
+          }).length;
+          return blobs.filter(function (n) {
+            return CHANGELOG_TEXT_EXTS.indexOf(n.path.split(".").pop().toLowerCase()) !== -1;
+          });
+        });
+      });
+    }).then(function (textBlobs) {
+      return Promise.all(textBlobs.map(function (n) {
+        return fetch(base + "/git/blobs/" + n.sha, { headers: { Accept: "application/vnd.github.raw+json" } })
+          .then(function (r) { return r.ok ? r.text() : ""; })
+          .catch(function () { return ""; });
+      }));
+    }).then(function (blobTexts) {
+      var loc = blobTexts.reduce(function (sum, txt) {
+        return sum + (txt.match(/\n/g) || []).length + (txt ? 1 : 0);
+      }, 0);
+      return fetchTotalCommitCount(base).then(function (totalCommits) {
+        state.changelogMeta = {
+          repo: CHANGELOG_OWNER + "/" + CHANGELOG_REPO,
+          ftp: CHANGELOG_FTP,
+          files: String(fileCount),
+          filesDeployed: String(deployedCount),
+          loc: loc.toLocaleString(),
+          totalChanges: (totalCommits != null) ? String(totalCommits) : (commits.length + (commits.length === 100 ? "+" : ""))
+        };
+        state.changelogCommits = commits.map(function (c) {
+          var d = new Date(c.commit.author.date);
+          var lines = c.commit.message.split("\n");
+          var subject = lines[0];
+          var verMatch = subject.match(/\(v[\d.]+\)/);
+          var body = lines.slice(1).filter(function (l) {
+            return !/^\s*(Co-Authored-By|Signed-off-by):/i.test(l);
+          }).join("\n").trim();
+          return { sha: c.sha.substring(0, 7), date: d, subject: subject, body: body,
+                   version: verMatch ? verMatch[0].replace(/[()]/g, "") : "", fullSha: c.sha };
+        });
+        state.changelogLoading = false;
+        renderChangelogPage();
+      });
+    }).catch(function (err) {
+      state.changelogLoading = false;
+      state.changelogError = "Failed to load change log: " + (err && err.message || err);
+      renderChangelogPage();
+    });
+  }
+
+  function fmtChangelogDate(d) {
+    var months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    var h = d.getHours(), ap = h >= 12 ? "PM" : "AM"; h = h % 12 || 12;
+    function p(n) { return (n < 10 ? "0" : "") + n; }
+    return months[d.getMonth()] + " " + d.getDate() + ", " + d.getFullYear() + " · " + p(h) + ":" + p(d.getMinutes()) + " " + ap;
+  }
+
+  function renderChangelogPage() {
+    var host = $("#changelogHost");
+    if (!host) return;
+    host.innerHTML = "";
+    if (!state.changelogOpen) return;
+
+    var head = buildPageBanner(closeChangelog, "Change Log");
+    var body = el("div", { class: "changelog-page-inner" }, []);
+
+    if (state.changelogMeta) {
+      var m = state.changelogMeta;
+      var statDefs = [
+        ["Repository", m.repo], ["FTP Deployment Path", m.ftp], ["Files in Repo", m.files],
+        ["Files Deployed", m.filesDeployed], ["Lines of Code", m.loc], ["Total Changes", m.totalChanges]
+      ];
+      body.appendChild(el("div", { class: "changelog-card" }, [
+        el("div", { class: "changelog-meta" }, statDefs.map(function (s) {
+          return el("div", {}, [el("div", { class: "k" }, [s[0]]), el("div", { class: "v" }, [s[1]])]);
+        }))
+      ]));
+    }
+
+    if (state.changelogLoading) {
+      body.appendChild(el("div", { class: "hint" }, ["Loading commits…"]));
+    } else if (state.changelogError) {
+      body.appendChild(el("div", { class: "form-error" }, [state.changelogError]));
+    } else if (state.changelogCommits) {
+      var table = el("table", { class: "grid" }, [
+        el("thead", {}, [el("tr", {}, [
+          el("th", {}, ["Date"]), el("th", {}, ["Version"]), el("th", {}, ["Message"]), el("th", {}, ["SHA"])
+        ])]),
+        el("tbody", {}, state.changelogCommits.map(function (c) {
+          var msgKids = [el("div", { style: "font-weight:600" }, [c.subject])];
+          if (c.body) msgKids.push(el("div", { class: "changelog-body" }, [c.body]));
+          var link = el("a", { href: "https://github.com/" + CHANGELOG_OWNER + "/" + CHANGELOG_REPO + "/commit/" + c.fullSha, target: "_blank", rel: "noopener", class: "changelog-sha" }, [c.sha]);
+          return el("tr", {}, [
+            el("td", {}, [fmtChangelogDate(c.date)]),
+            el("td", {}, c.version ? [el("span", { class: "changelog-ver" }, [c.version])] : []),
+            el("td", { style: "white-space:normal" }, msgKids),
+            el("td", {}, [link])
+          ]);
+        }))
+      ]);
+      body.appendChild(el("div", { class: "changelog-card flush" }, [
+        el("div", { class: "changelog-table-wrap" }, [table])
+      ]));
+    }
+
+    var page = el("div", { class: "changelog-page" }, [head, el("div", { class: "changelog-page-body" }, [body])]);
+    host.appendChild(page);
+  }
+
+  // ---------- init ----------
+  function init() {
+    document.body.appendChild(el("div", { id: "detailHost" }));
+    document.body.appendChild(el("div", { id: "printHost" }));
+    document.body.appendChild(el("div", { id: "settingsHost" }));
+    document.body.appendChild(el("div", { id: "changelogHost" }));
+    document.body.appendChild(el("div", { id: "tshirtOrderHost" }));
+    document.body.appendChild(el("div", { id: "confirmHost" }));
+    document.body.appendChild(el("div", { id: "testsHost" }));
+    document.body.appendChild(el("div", { id: "developerLoginHost" }));
+    // window.__vettefestSite is set by index.php before this script runs — see
+    // the declaration comment near SITE_CONFIG above. Read it here, not at
+    // module-load time, since init() is what's guaranteed to run after every
+    // inline script in the document.
+    SITE_CONFIG = window.__vettefestSite || {};
+    buildHeaderMenu();
+    document.addEventListener("keydown", function (e) {
+      if (e.key !== "Escape") {
+        if (state.detailRow) {
+          if (e.key === "ArrowLeft") stepDetail(-1);
+          else if (e.key === "ArrowRight") stepDetail(1);
+        }
+        return;
+      }
+      if (state.settingsOpen) { closeSettings(); return; }
+      if (state.testsPageOpen) { closeTestsPage(); return; }
+      if (state.developerLoginOpen) { closeDeveloperLogin(); return; }
+      if (state.changelogOpen) { closeChangelog(); return; }
+      if (state.tshirtOrderPageOpen) { closeTshirtOrderPage(); return; }
+      if (state.showPendingDelete) { cancelDeleteShow(); return; }
+      if (state.deleteRegSelectedOpen) { closeDeleteRegSelectedConfirm(); return; }
+      if (state.menuOpen) { closeMenu(); return; }
+      if (state.detailRow) closeDetail();
+    });
+    renderViews();
+  }
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init);
+  else init();
+
+  // Debug/test hook (harmless in production): drive the app without file I/O.
+  var API = window.__vettefest = {
+    get state() { return state; },
+    // MUST be called before every other ingest (index.php emits it first):
+    // until the app knows which event is open it can't decide whether to
+    // render the picker or the tabs, CONFIG.title has to be right before
+    // ingestRows() bakes it into state.result.meta.title, and regenerate()
+    // reads the open year to build Reg #.
+    ingestShows: function (shows, currentYear, openYear) {
+      state.shows = (Array.isArray(shows) ? shows.slice() : []).sort(function (a, b) {
+        return (Number(b.year) || 0) - (Number(a.year) || 0);
+      });
+      state.publicShowYear = currentYear ? String(currentYear) : null;
+      var open = null;
+      if (openYear) {
+        var wanted = String(openYear);
+        state.shows.forEach(function (s) { if (String(s.year) === wanted) open = s; });
+      }
+      state.currentShow = open;
+      applyShowTitle();
+      // One assignment covers every place the event name surfaces — the
+      // Summary panel heading, all four print report headers and the Excel
+      // export read it through state.result.meta.title.
+      if (open) CONFIG.title = LOGIC.showRegistrationTitle(open);
+      renderViews();
+    },
+    ingestRows: function (regRows, actRows, generatedAt) {
+      state.reg = { name: "registration.csv", rows: regRows };
+      state.act = actRows ? { name: "activity.csv", rows: actRows } : null;
+      regenerate(generatedAt);
+    },
+    // Called by index.php's boot script with app-wide settings read fresh
+    // from the server on this page load.
+    ingestAppSettings: function (settings) {
+      if (settings && typeof settings === "object") {
+        Object.keys(settings).forEach(function (k) { state.appSettings[k] = settings[k]; });
+      }
+    },
+    // Called BEFORE ingestRows(), with the set of csvRegKey()s previously
+    // deleted — so regenerate() can exclude them the moment the CSV is
+    // parsed, not just after the fact.
+    ingestDeletedRegistrations: function (keys) {
+      state.deletedCsvKeys = {};
+      (Array.isArray(keys) ? keys : []).forEach(function (k) { state.deletedCsvKeys[k] = true; });
+    },
+    // Same ordering requirement — regenerate() applies these field-edit
+    // patches to the freshly-parsed rows immediately.
+    ingestRegistrationOverrides: function (overrides) {
+      state.csvOverrides = (overrides && typeof overrides === "object") ? overrides : {};
+    },
+    setTab: function (t) { state.tab = t; renderViews(); },
+    setSearch: function (q) { state.search = q; renderRegBody(); },
+    openDetail: openDetail,
+    closeDetail: closeDetail,
+    stepDetail: stepDetail,
+    openSettings: openSettings,
+    closeSettings: closeSettings,
+    exportExcel: exportExcel,
+    runRegressionTests: runRegressionTests
+  };
+  return (window.VetteFest = API);
+})();

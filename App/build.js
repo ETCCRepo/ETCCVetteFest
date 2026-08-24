@@ -1,0 +1,101 @@
+/* build.js — inline vendor + src into a single self-contained ETCCVetteFest.html.
+ * Usage: node build.js [outputPath]
+ */
+var fs = require("fs");
+var path = require("path");
+
+var HERE = __dirname;
+function read(p) { return fs.readFileSync(path.join(HERE, p), "utf8"); }
+// Prevent a stray "</script>" in library text from closing our script tag.
+function safeJs(s) { return s.replace(/<\/script>/gi, "<\\/script>"); }
+
+// JSON.stringify safely escapes quotes/backslashes/newlines; also guard the
+// two line-terminator code points (U+2028, U+2029) that JSON leaves
+// unescaped but that older JS engines choke on inside string literals.
+function jsStringLiteral(s) {
+  var LS = String.fromCharCode(0x2028);
+  var PS = String.fromCharCode(0x2029);
+  return JSON.stringify(s).split(LS).join("\\u2028").split(PS).join("\\u2029");
+}
+
+// Developer > Run Regression Tests needs the fixture CSVs available in the
+// browser with no network/file access — embed them as a global.
+var fixturesScript = "window.VetteFestFixtures = { regCsv: " +
+  jsStringLiteral(read("test/fixtures/registration.csv")) + ", actCsv: " +
+  jsStringLiteral(read("test/fixtures/activity.csv")) + " };";
+
+// Embed the logo as a data URI so the output stays a single self-contained
+// file (no external image reference) — same source file used by the
+// Hostinger deploy's login screen (deploy/ftp-deploy.sh uploads it there).
+var logoDataUri = "data:image/png;base64," + fs.readFileSync(path.join(HERE, "assets/ETCClogoWhiteBackground.png")).toString("base64");
+
+// Reports tab banner image — embedded the same way as the logo above, but
+// exposed to app.js as a global (rather than baked into a static <img> tag
+// here) since the Reports tab is built dynamically by app.js.
+var reportsBannerDataUri = "data:image/jpeg;base64," + fs.readFileSync(path.join(HERE, "assets/reports-banner.jpg")).toString("base64");
+var reportsBannerScript = "window.__vettefestReportsBanner = " + JSON.stringify(reportsBannerDataUri) + ";";
+
+var css = read("src/styles.css");
+var scripts = [
+  read("vendor/papaparse.min.js"),
+  read("vendor/exceljs.min.js"),
+  read("src/config.js"),
+  read("src/logic.js"),
+  read("src/excel.js"),
+  read("src/regression-tests.js"),
+  fixturesScript,
+  reportsBannerScript,
+  read("src/app.js")
+].map(safeJs);
+
+// --- version: starts at 1.0, bumps the minor number every time this script
+// runs (each run produces the deployed ETCCVetteFest.html). The stamped
+// version/date are baked into the HTML at build time — not computed at page
+// load — so they reflect when THIS artifact was actually built, not today.
+var VERSION_PATH = path.join(HERE, "version.json");
+var version = { major: 1, minor: 0 };
+if (fs.existsSync(VERSION_PATH)) {
+  try { version = JSON.parse(fs.readFileSync(VERSION_PATH, "utf8")); } catch (e) { /* fall back to 1.0 */ }
+}
+var versionString = version.major + "." + version.minor;
+var deployedAt = new Date();
+fs.writeFileSync(VERSION_PATH, JSON.stringify({
+  major: version.major, minor: version.minor + 1, lastBuilt: deployedAt.toISOString()
+}, null, 2) + "\n");
+
+function fmtDateTime(d) {
+  function p(n) { return (n < 10 ? "0" : "") + n; }
+  var h = d.getHours(), ap = h >= 12 ? "PM" : "AM"; h = h % 12 || 12;
+  return p(d.getMonth() + 1) + "/" + p(d.getDate()) + "/" + d.getFullYear() + " " + p(h) + ":" + p(d.getMinutes()) + " " + ap;
+}
+
+// The <h1> and <title> here are the "no event open" fallbacks — app.js's
+// applyShowTitle() overwrites both with the open event's year the moment
+// ingestShows() runs. See that function.
+var html =
+'<!DOCTYPE html>\n' +
+'<html lang="en">\n<head>\n<meta charset="utf-8">\n' +
+'<meta name="viewport" content="width=device-width, initial-scale=1">\n' +
+'<title>ETCC Vette Fest — Registration</title>\n' +
+'<link rel="icon" type="image/png" href="' + logoDataUri + '">\n' +
+'<style>\n' + css + '\n</style>\n</head>\n<body>\n' +
+'<header class="app">\n' +
+'  <div class="hdr-left"><img src="' + logoDataUri + '" alt="ETCC Logo" class="hdr-logo"></div>\n' +
+'  <div class="hdr-center"><h1>Vette Fest Manager</h1></div>\n' +
+'  <div class="hdr-right"></div>\n' +
+'</header>\n' +
+'<div class="wrap">\n' +
+'  <div id="app"></div>\n' +
+'</div>\n' +
+'<footer class="app-footer">\n' +
+'  <div>v' + versionString + ' &middot; Deployed ' + fmtDateTime(deployedAt) + '</div>\n' +
+'  <div class="footer-credit">Website by Business Web Express &middot; <a href="mailto:info@businesswebexpress.com">info@businesswebexpress.com</a></div>\n' +
+'  <div class="footer-credit">&copy; ' + deployedAt.getFullYear() + ' East Tennessee Corvette Club &middot; Knoxville, TN &middot; <a href="mailto:etccwebsite.webmanager@gmail.com">etccwebsite.webmanager@gmail.com</a></div>\n' +
+'</footer>\n' +
+scripts.map(function (s) { return '<script>\n' + s + '\n</script>'; }).join("\n") +
+'\n</body>\n</html>\n';
+
+var out = process.argv[2] || path.join(HERE, "ETCCVetteFest.html");
+fs.writeFileSync(out, html);
+var kb = Math.round(Buffer.byteLength(html) / 1024);
+console.log("Wrote " + out + " (" + kb + " KB)");

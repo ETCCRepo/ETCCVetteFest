@@ -1,0 +1,19 @@
+node_modules/
+*.log
+Thumbs.db
+.DS_Store
+
+# Deploy secrets — never commit. Copy secrets.example.php to create it.
+App/deploy/secrets.php
+
+# FTP credentials for deploy/ftp-deploy.sh, read at runtime by that script.
+# Never committed. Create your own copy from .ftp-credentials.example
+# (which IS committed, as a template).
+App/deploy/.ftp-credentials
+
+# Live data accumulates on the server under data/<year>/ and is never
+# committed or overwritten by a deploy (see deploy/ftp-deploy.sh). These
+# patterns cover a local copy pulled down for debugging.
+App/deploy/data/
+App/deploy/*.json
+!App/deploy/package.json

@@ -1,0 +1,401 @@
+/* ETCC Vette Fest — registration manager (hosted at etccapps.com/apps/vettefest) */
+:root {
+  --red: #b0141e;
+  --red-dark: #7d0e15;
+  --ink: #1a1a1a;
+  --muted: #667085;
+  --line: #e3e6ea;
+  --bg: #f4f6f8;
+  --panel: #ffffff;
+  --accent: #0b5cad;
+  --good: #147d3a;
+  --warn: #b0141e;
+  --title-yellow: #fff7cc;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+  font: 14px/1.45 "Segoe UI", Arial, sans-serif;
+  color: var(--ink);
+  background: var(--bg);
+}
+/* Grid (not flex) so the center title stays visually centered on the page
+   regardless of how wide the left (hamburger+logo) content is — the right
+   column is an empty spacer of equal width. */
+header.app {
+  color: #000; padding: 14px 20px; display: grid;
+  grid-template-columns: 1fr auto 1fr; align-items: center;
+  position: relative; border-bottom: 1px solid var(--line);
+}
+header.app .hdr-left { display: flex; align-items: center; gap: 14px; justify-self: start; }
+header.app .hdr-center { justify-self: center; }
+header.app .hdr-right { justify-self: end; }
+header.app .hdr-logo { height: 72px; width: 72px; object-fit: contain; border-radius: 6px; }
+header.app h1 { font-size: 19px; margin: 0; font-weight: 700; letter-spacing: .2px; color: #000; white-space: nowrap; }
+
+/* ── Hamburger — SilentAuctionManager style: 3-bar icon at the far left of
+   the header, animating into an X while the drawer is open ── */
+.hamburger-btn {
+  background: transparent; border: none; color: var(--ink); cursor: pointer;
+  width: 40px; height: 40px; display: flex; flex-direction: column; justify-content: center;
+  align-items: center; gap: 5px; padding: 0; flex-shrink: 0; border-radius: 6px;
+  transition: background 0.12s;
+}
+.hamburger-btn:hover { background: rgba(0,0,0,0.06); }
+.hamburger-btn .bar { display: block; width: 22px; height: 2px; background: var(--ink); border-radius: 2px; transition: transform 0.2s, opacity 0.2s; }
+.hamburger-btn.open .bar:nth-child(1) { transform: translateY(7px) rotate(45deg); }
+.hamburger-btn.open .bar:nth-child(2) { opacity: 0; }
+.hamburger-btn.open .bar:nth-child(3) { transform: translateY(-7px) rotate(-45deg); }
+
+/* ── Off-canvas nav drawer — SilentAuctionManager style ── */
+.hdr-nav-backdrop {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.4);
+  opacity: 0; visibility: hidden; transition: opacity 0.22s ease, visibility 0.22s ease; z-index: 150;
+}
+.hdr-nav-backdrop.open { opacity: 1; visibility: visible; }
+.hdr-menu {
+  position: fixed; top: 0; bottom: 0; left: 0; width: 220px; background: #1d1d1f;
+  display: flex; flex-direction: column; overflow-y: auto; padding: 12px 0;
+  transform: translateX(-100%); transition: transform 0.22s ease; z-index: 200;
+  box-shadow: 2px 0 12px rgba(0,0,0,0.25);
+}
+.hdr-menu.open { transform: translateX(0); }
+.hdr-menu-item {
+  display: block; width: 100%; text-align: left; padding: 10px 16px; background: transparent; border: none;
+  font-size: 13px; color: #aeaeb2; cursor: pointer; text-decoration: none;
+}
+.hdr-menu-item:hover { background: rgba(255,255,255,0.07); color: #fff; }
+.hdr-dev-row { display: flex; gap: 6px; cursor: default; padding: 10px 16px; }
+.hdr-dev-row:hover { background: transparent; }
+.hdr-dev-pw {
+  flex: 1; min-width: 0; padding: 6px 8px; border: 1px solid #3a3a3c; border-radius: 5px;
+  font-size: 13px; font-family: inherit; color: #fff; background: #2c2c2e;
+}
+.hdr-dev-row .btn { flex: none; padding: 6px 10px; font-size: 13px; }
+.hdr-dev-error { padding: 0 16px 10px; color: #ff6b6b; font-size: 12px; }
+.wrap { max-width: 1500px; margin: 0 auto; padding: 16px 20px 60px; }
+
+footer.app-footer {
+  text-align: center; color: var(--muted); font-size: 12px; padding: 14px 20px 20px; border-top: 1px solid var(--line);
+}
+footer.app-footer .footer-credit { font-size: 10px; margin-top: 4px; }
+
+.btn {
+  display: inline-block; border: 1px solid var(--line); background: #fff; color: var(--ink);
+  padding: 7px 13px; border-radius: 7px; cursor: pointer; font-size: 13px; font-weight: 600;
+}
+.btn:hover { background: #f2f4f7; }
+.btn.primary { background: var(--red); border-color: var(--red-dark); color: #fff; }
+.btn.primary:hover { background: var(--red-dark); }
+.btn:disabled { opacity: .5; cursor: not-allowed; }
+.hint { font-size: 12px; color: var(--muted); }
+
+/* tabs + toolbar */
+.tabs { display: flex; gap: 6px; margin: 18px 0 10px; border-bottom: 2px solid var(--line); }
+.tab {
+  padding: 9px 16px; cursor: pointer; font-weight: 600; color: var(--muted);
+  border: 2px solid transparent; border-bottom: none; border-radius: 8px 8px 0 0; margin-bottom: -2px;
+}
+.tab.active { color: var(--red); border-color: var(--line); border-bottom: 2px solid #fff; background: #fff; }
+.toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin: 10px 0 12px; }
+.toolbar input[type=search] {
+  padding: 8px 10px; border: 1px solid var(--line); border-radius: 7px; min-width: 240px; font-size: 13px;
+}
+.toolbar label { font-size: 13px; color: var(--ink); display: inline-flex; align-items: center; gap: 5px; cursor: pointer; }
+.statusgroup { display: inline-flex; align-items: center; gap: 10px; padding: 4px 10px; border: 1px solid var(--line); border-radius: 7px; background: #fbfcfd; }
+.loadedinfo { font-size: 12px; color: var(--muted); margin: -2px 0 10px; }
+.spacer { flex: 1; }
+.count { font-size: 12px; color: var(--muted); }
+.zoomgroup { display: inline-flex; align-items: center; gap: 4px; }
+.zoomgroup .btn { padding: 4px 10px; line-height: 1; }
+.zoomgroup .count { min-width: 38px; text-align: center; }
+
+/* table */
+.tablewrap { overflow: auto; max-height: calc(100vh - 250px); border: 1px solid var(--line); border-radius: 10px; background: #fff; }
+table.grid { border-collapse: separate; border-spacing: 0; width: 100%; font-size: 13px; }
+table.grid th, table.grid td { padding: 6px 9px; border-bottom: 1px solid var(--line); white-space: nowrap; text-align: left; vertical-align: middle; }
+/* Without this, a checkbox's intrinsic box (Sponsors tab's row-select column)
+   renders slightly taller than a plain text cell at the same padding,
+   making Sponsors rows taller than Registration rows despite sharing this
+   same table.grid padding/font-size. */
+table.grid td input[type="checkbox"] { display: block; margin: 0; }
+table.grid thead th {
+  position: sticky; top: 0; z-index: 2; background: #eef1f4; font-weight: 700; cursor: pointer;
+  border-bottom: 2px solid #d5dae0; user-select: none;
+  /* Wrap header labels instead of forcing nowrap (unlike data cells) — this lets
+     the table's auto layout size each column by its narrower data content
+     rather than by long header text, shrinking the overall row width. */
+  white-space: normal; line-height: 1.25; vertical-align: bottom;
+}
+/* Auto table layout only wraps a header when it needs to — for columns whose
+   data is much narrower than the label (a member #, a $ amount, "Yes"/"No"),
+   it otherwise just gives the header its full unwrapped width. Capping these
+   specific headers' width forces the wrap so the column follows the data. */
+table.grid th.narrow-hdr { max-width: 8ch; }
+table.grid thead th:hover { background: #e3e8ee; }
+table.grid thead th .arrow { color: var(--red); font-size: 11px; margin-left: 4px; }
+/* Explicit (not transparent) background on every row state — .pinned cells
+   inherit this, and without it odd rows (the default, unstyled state) would
+   inherit transparent, letting the columns scrolled underneath show through
+   the sticky pinned cells. */
+table.grid tbody tr { cursor: pointer; background: #fff; }
+table.grid tbody tr:nth-child(even) { background: #fafbfc; }
+table.grid tbody tr:hover { background: #fff6e9; }
+table.grid td.num, table.grid th.num { text-align: right; font-variant-numeric: tabular-nums; }
+table.grid td.shirt { text-align: center; color: var(--accent); font-weight: 600; }
+table.grid td.shirtsum, table.grid th.shirtsum { text-align: center; }
+table.grid td.shirtsum { color: var(--accent); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 260px; }
+.pinned { position: sticky; background: inherit; z-index: 1; }
+.pin-1 { left: 0; }
+th.pinned { z-index: 3; }
+
+/* detail modal */
+.modal-backdrop {
+  position: fixed; inset: 0; background: rgba(20, 20, 20, .45);
+  display: flex; align-items: center; justify-content: center; z-index: 100; padding: 24px;
+}
+.modal {
+  background: #fff; border-radius: 12px; width: 100%; max-width: 640px; max-height: 88vh;
+  overflow: auto; box-shadow: 0 20px 60px rgba(0, 0, 0, .3);
+}
+.modal.wide { max-width: 686px; }
+.modal-head {
+  display: flex; align-items: center; gap: 8px; padding: 14px 18px; border-bottom: 1px solid var(--line);
+  position: sticky; top: 0; background: #fff; border-radius: 12px 12px 0 0;
+}
+.modal-head h3 { margin: 0; font-size: 17px; flex: 1; }
+.modal-head .btn { padding: 5px 10px; font-size: 12px; }
+.modal-body { padding: 4px 18px 20px; }
+.modal-section { margin-top: 14px; }
+.modal-section h4 { margin: 0 0 4px; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+
+/* Developer login — same full-screen gradient-card look as _login.html's
+   #password-screen (the main site login gate), not the app's usual modal or
+   full-page-banner styles, since this is meant to feel like "the same kind
+   of password prompt," just for a different credential. */
+.dev-login-screen {
+  position: fixed; inset: 0; z-index: 200;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+}
+.dev-login-container {
+  position: relative;
+  background: #fff; border-radius: 12px; padding: 40px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, .3); max-width: 400px; width: 100%; box-sizing: border-box;
+}
+.dev-login-close {
+  position: absolute; top: 12px; right: 12px; background: none; border: none;
+  font-size: 16px; color: #6e6e73; cursor: pointer; padding: 4px 8px; line-height: 1;
+}
+.dev-login-close:hover { color: #1d1d1f; }
+.dev-login-logo { height: 60px; width: 60px; display: block; margin: 0 auto 20px; object-fit: contain; }
+.dev-login-title { text-align: center; font-size: 22px; font-weight: 600; color: #1d1d1f; margin: 0 0 10px; }
+.dev-login-subtitle { text-align: center; font-size: 13px; color: #6e6e73; margin: 0 0 22px; }
+.dev-login-input {
+  width: 100%; padding: 12px 14px; font-size: 14px; border: 2px solid #d2d2d7;
+  border-radius: 6px; box-sizing: border-box; font-family: inherit; color: #1d1d1f; background: #fff;
+}
+.dev-login-input:focus { outline: none; border-color: #0071e3; }
+.dev-login-btn {
+  width: 100%; padding: 12px; background: #0071e3; color: #fff; border: none; border-radius: 6px;
+  font-size: 14px; font-weight: 600; cursor: pointer; margin-top: 16px; transition: background .2s;
+}
+.dev-login-btn:hover { background: #0077ed; }
+.dev-login-btn:disabled { opacity: .6; cursor: default; }
+.dev-login-error { color: #c62828; font-size: 12px; margin: 8px 0 0; text-align: center; }
+.dev-login-hint { color: #6e6e73; font-size: 12px; text-align: center; margin-top: 18px; }
+
+/* form rows (Settings, T-Shirt Order Form) */
+.form-row { display: flex; align-items: center; gap: 10px; margin: 9px 0; }
+.form-row .form-label { min-width: 140px; font-size: 13px; font-weight: 600; color: var(--ink); }
+.form-row input[type=text], .form-row select {
+  flex: 1; padding: 7px 9px; border: 1px solid var(--line); border-radius: 6px; font-size: 13px; font-family: inherit;
+}
+.form-row label { display: inline-flex; align-items: center; gap: 5px; font-size: 13px; cursor: pointer; }
+.form-row .form-value { flex: 1; padding: 7px 9px; font-size: 13px; color: var(--muted); }
+.form-error { color: var(--warn); font-size: 12px; min-height: 16px; margin-top: 4px; }
+
+/* settings modal */
+.settings-actions { display: flex; align-items: center; gap: 14px; margin: 10px 0 14px; flex-wrap: wrap; }
+.test-summary { font-weight: 700; margin-bottom: 10px; }
+.test-summary.good { color: var(--good); }
+.test-summary.warn { color: var(--warn); }
+.test-list { list-style: none; margin: 0; padding: 0; max-height: 50vh; overflow: auto; border: 1px solid var(--line); border-radius: 8px; }
+.test-list li { padding: 6px 10px; border-bottom: 1px solid var(--line); font-size: 13px; }
+.test-list li:last-child { border-bottom: none; }
+.test-list li.pass { color: var(--good); }
+.test-list li.fail { color: var(--warn); background: #fff5f5; }
+.test-list .expect { color: var(--muted); font-size: 11px; margin-top: 2px; }
+
+/* change log — a full page (SilentAuctionManager's Change Log is a full
+   nav "screen", not a dialog), not a centered modal like Settings. Fixed,
+   covers the whole viewport, above the hamburger drawer (z-index 200). */
+.changelog-page { position: fixed; inset: 0; background: #fff; z-index: 300; display: flex; flex-direction: column; }
+.changelog-page-head { display: flex; align-items: center; gap: 10px; padding: 14px 20px; border-bottom: 1px solid var(--line); flex-shrink: 0; }
+.changelog-page-head h2 { margin: 0; font-size: 18px; flex: 1; }
+.changelog-page-body { flex: 1; overflow: auto; padding: 20px; }
+.changelog-page-inner { max-width: 1100px; margin: 0 auto; }
+/* Same two-card shape as SAM's Change Log screen: one bordered card holding
+   an unboxed stat grid (SAM's #changelog-meta/.stat-box, which has no CSS
+   of its own beyond the wrapping .card), then a second card, flush/no-
+   padding, holding the scrollable commit table (SAM's second .card +
+   #changelog-table). */
+.changelog-card { background: #fff; border: 1px solid var(--line); border-radius: 10px; margin-bottom: 16px; }
+.changelog-meta { display: grid; grid-template-columns: repeat(6, 1fr); gap: 12px; padding: 14px 16px; }
+.changelog-meta .k { font-size: 11px; color: var(--muted); }
+.changelog-meta .v { font-size: 13px; font-weight: 600; margin-top: 2px; word-break: break-word; }
+.changelog-card.flush { padding: 0; }
+.changelog-table-wrap { max-height: none; overflow: visible; }
+.changelog-table-wrap table.grid th, .changelog-table-wrap table.grid td { white-space: normal; vertical-align: top; }
+.changelog-body { color: var(--muted); font-size: 11px; margin-top: 4px; line-height: 1.5; white-space: pre-wrap; }
+.changelog-ver { font-size: 11px; background: #dbeafe; padding: 2px 6px; border-radius: 10px; display: inline-block; }
+.changelog-sha { font-family: monospace; font-size: 11px; color: var(--accent); }
+@media (max-width: 700px) { .changelog-meta { grid-template-columns: repeat(2, 1fr); } }
+
+/* Developer > API — same full-page shape as Change Log above (independent
+   rules, not shared classes, matching this app's existing small-duplication-
+   over-premature-abstraction style — see excel.js's SPONSOR_COLS). */
+.api-page { position: fixed; inset: 0; background: #fff; z-index: 300; display: flex; flex-direction: column; }
+.api-page-head { display: flex; align-items: center; gap: 10px; padding: 14px 20px; border-bottom: 1px solid var(--line); flex-shrink: 0; }
+.api-page-head h2 { margin: 0; font-size: 18px; flex: 1; }
+.api-page-body { flex: 1; overflow: auto; padding: 20px; }
+.api-page-inner { max-width: 900px; margin: 0 auto; }
+.api-card { background: #fff; border: 1px solid var(--line); border-radius: 10px; margin-bottom: 16px; padding: 14px 16px; }
+.api-card h4 { margin: 0 0 8px; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+.api-card p { margin: 0; font-size: 13px; line-height: 1.5; }
+.api-url-input { font-family: monospace; font-size: 12px; }
+.api-response { background: #f7f8fa; border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; font-size: 12px; max-height: 40vh; overflow: auto; white-space: pre-wrap; word-break: break-word; }
+
+/* Developer > T-Shirt Order Email — same full-page shape as Change Log/API
+   above (independent rules, not shared classes, same reasoning as those). Its
+   cards/preview reuse .api-card/.api-response directly (a generic card/
+   monospace-preview look, not actually API-specific). */
+/* T-Shirts tab — email composer + report */
+.tshirt-view { max-width: 700px; margin: 0 auto; }
+.tshirt-view .panel { margin-bottom: 20px; }
+.tshirt-view .form-group { margin-bottom: 16px; }
+.tshirt-view .form-group label { display: block; font-weight: 600; font-size: 14px; margin-bottom: 6px; }
+.tshirt-view .form-group input[type="text"],
+.tshirt-view .form-group textarea { width: 100%; padding: 8px; border: 1px solid var(--line); border-radius: 4px; font-family: inherit; }
+.tshirt-view .form-value { padding: 8px; background: #f5f5f5; border-radius: 4px; }
+
+/* summary */
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 16px; }
+.card { background: #fff; border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
+.card .k { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+.card .v { font-size: 26px; font-weight: 700; margin-top: 4px; }
+
+.stat-cards { grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); margin-bottom: 0; }
+.stat-card { background: #fbfcfd; border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
+.stat-card-head { font-size: 14px; font-weight: 700; color: var(--red-dark); margin-bottom: 10px; }
+.stat-card-stats { display: flex; gap: 22px; margin-bottom: 12px; }
+.stat-card-stats .stat-v { font-size: 22px; font-weight: 700; }
+.stat-card-stats .stat-k { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+.stat-card table.matrix { width: 100%; background: #fff; }
+.stat-card table.matrix th, .stat-card table.matrix td { padding: 4px 8px; font-size: 12px; }
+.panel { background: #fff; border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; margin-bottom: 16px; }
+.panel h3 { margin: 0 0 10px; font-size: 15px; color: var(--red-dark); }
+table.matrix { border-collapse: collapse; }
+table.matrix th, table.matrix td { border: 1px solid var(--line); padding: 6px 12px; text-align: center; }
+table.matrix th { background: #f3f5f8; }
+table.matrix td.lbl, table.matrix th.lbl { text-align: left; font-weight: 600; background: #fafbfc; }
+table.matrix td.z { color: #c2c8d0; }
+.meta-list { list-style: none; padding: 0; margin: 0; }
+.meta-list li { padding: 3px 0; color: var(--ink); }
+.meta-list .k { color: var(--muted); display: inline-block; min-width: 190px; }
+.status.good { color: var(--good); font-weight: 700; }
+.status.warn { color: var(--warn); font-weight: 700; }
+.messages { border-left: 4px solid var(--warn); background: #fff5f5; padding: 8px 12px; border-radius: 6px; }
+.messages li { color: var(--warn); }
+.empty-state { color: var(--muted); text-align: center; padding: 40px; }
+
+/* print */
+#printHost { display: none; }
+/* ---------- Car Shows picker (buildShowsPage in app.js) ----------
+   The screen every session lands on, until a show is opened. Deliberately plain: it's a signpost, not a workspace. */
+.shows-panel { max-width: 900px; margin: 0 auto; }
+.shows-head { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+.shows-head h3 { margin: 0; font-size: 15px; color: var(--red-dark); }
+/* Rows here are not clickable as a whole (each has its own buttons), so
+   opt out of table.grid's row cursor/hover affordance. */
+table.shows-grid tbody tr { cursor: default; }
+table.shows-grid tbody tr:hover { background: inherit; }
+table.shows-grid tbody tr:nth-child(even):hover { background: #fafbfc; }
+table.shows-grid td.show-actions { text-align: right; white-space: nowrap; }
+table.shows-grid td.show-actions .btn + .btn { margin-left: 4px; }
+a.show-open { color: var(--red-dark); font-weight: 600; text-decoration: none; }
+a.show-open:hover { text-decoration: underline; }
+.shows-note { margin-top: 12px; font-size: 12px; color: var(--muted); line-height: 1.5; }
+
+.btn.btn-sm { padding: 3px 10px; font-size: 11px; }
+/* Destructive actions. Uses --warn (the same red the Remove All Sponsors
+   confirmation uses) rather than introducing a new colour. */
+.btn.btn-warn { color: var(--warn); border-color: var(--warn); }
+.btn.btn-warn:hover { background: #fff5f5; }
+
+.badge {
+  display: inline-block; padding: 2px 8px; border-radius: 10px;
+  font-size: 10px; font-weight: 600; letter-spacing: .04em; color: #fff;
+}
+.badge-ok { background: var(--ok, #2e7d32); }
+.badge-muted { background: var(--muted); }
+.badge-accent { background: var(--accent); }
+
+@media print {
+  @page { size: landscape; margin: 0.3in; }
+  header.app, .tabs, .toolbar, .no-print, .modal-backdrop, .changelog-page, .api-page, .loadedinfo, footer.app-footer { display: none !important; }
+  .wrap { max-width: none; padding: 0; }
+  .tablewrap { max-height: none; overflow: visible; border: none; }
+  table.grid thead th { position: static; }
+  table.grid th, table.grid td { white-space: normal; }
+  .view { display: block !important; }
+  /* These two must come after ".view { display: block !important; }" above —
+     both are single-class selectors with equal specificity, so source order
+     decides the winner, and the tab-specific hide needs to beat the generic
+     "always show the current tab" rule. */
+  .view.tshirt-view, .view.reports-view { display: none !important; }
+  body { background: #fff; }
+  /* Registration tab: hide the on-screen (collapsed-columns) table and show the
+     full-column print-only table built fresh by printRegistration() instead.
+     47 columns is a lot for one page — table-layout:fixed + width:100% forces
+     every column to actually fit within the page width instead of Chrome's
+     default behavior of just clipping whatever runs past the right margin
+     (the bug: a first print attempt only showed the first ~14 columns because
+     nothing constrained the table to the printable area). Small font + tight
+     padding + forced wrapping keep it readable at that width. */
+  .tablewrap { display: none !important; }
+  #printHost { display: block !important; }
+  #printHost h2 { margin: 0; font-size: 14px; }
+  /* Shared logo + centered title header, and report-date footer, added by
+     buildPrintHeader()/buildPrintFooter() in app.js — used by every print
+     report (Registration, Sponsors, T-Shirt, and the three Reports-tab
+     reports) so they share one consistent look. */
+  #printHost .print-report-head { display: flex; flex-direction: column; align-items: center; gap: 4px; margin-bottom: 10px; }
+  #printHost .print-report-head .print-logo { height: 40px; width: 40px; object-fit: contain; }
+  #printHost .print-report-foot { margin-top: 14px; text-align: center; font-size: 11px; color: var(--muted); }
+  #printHost table.grid { table-layout: fixed; width: 100%; }
+  #printHost table.grid th, #printHost table.grid td {
+    font-size: 6px; line-height: 1.25; padding: 2px 3px;
+    white-space: normal; word-break: break-word; overflow-wrap: break-word;
+  }
+  /* Registration/Sponsor/Summary Reports (Reports tab) only have a handful
+     of narrow columns, unlike the 47-column full Registration print above —
+     override its tiny fixed-width/6px styling with a narrower, more
+     readable table. */
+  #printHost table.report-table { table-layout: auto; width: auto; max-width: 100%; }
+  /* Registration Report only — centers its (narrow, 4-column) table
+     horizontally on the printed page instead of sitting flush left. */
+  #printHost table.centered-report-table { margin: 0 auto; }
+  #printHost table.report-table th, #printHost table.report-table td {
+    font-size: 12px; line-height: 1.4; padding: 3px 10px; white-space: nowrap;
+  }
+  #printHost table.report-table th.shirtsum, #printHost table.report-table td.shirtsum { text-align: left; }
+  /* Window cards (printWindowCards() in app.js) are no longer printed via
+     this page's own @media print rules — they're generated as a real,
+     separately-opened PDF (the uploaded fillable template, filled per
+     registrant via pdf-lib) instead of an HTML/CSS overlay. */
+}
+
+/* ── Reports tab banner row ── */
+.reports-row { display: flex; align-items: center; justify-content: center; gap: 24px; flex-wrap: wrap; margin-top: 10px; }
+.reports-banner { display: block; max-width: 360px; width: 100%; height: auto; border-radius: 10px; flex-shrink: 0; }
