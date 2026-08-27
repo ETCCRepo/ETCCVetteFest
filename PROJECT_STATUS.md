@@ -1,12 +1,16 @@
 # ETCC Vette Fest App — Project Status
 
-Last updated: 2026-08-24 (end of session). **The app is now live** — first deploy
-completed, two Registration-tab filter bugs fixed, the Summary tab now always shows the
-full dataset, and a Total row was added to the Car Show matrix. A first git commit was
-also made (repo had never been initialized before this session) but **is not yet pushed**
-— see "Known follow-ups" below, this needs the user to resolve a permissions problem.
+Last updated: 2026-08-27 (end of session). **The git push problem from 2026-08-24 is
+resolved** — the user supplied a personal access token and pushes now work (with a
+one-time-per-session credential-helper override, see below). Added a favicon to the
+login page (the main app bundle already had one), shipped as v2.2, and confirmed the
+regression suite is still 85/85.
 
-Previous update: 2026-08-23 (end of session). No prior PROJECT_STATUS.md existed for this
+Previous update: 2026-08-24 (end of session). **The app went live for the first time** —
+first deploy completed, two Registration-tab filter bugs fixed, the Summary tab was made
+to always show the full dataset, and a Total row was added to the Car Show matrix.
+
+Earlier update: 2026-08-23 (end of session). No prior PROJECT_STATUS.md existed for this
 project before that — it was the first one, written after the fact by inspecting the repo
 rather than from session memory, since the app was already substantially built when that
 session began.
@@ -20,17 +24,15 @@ list of deliberate differences — unisex shirts in 12 buckets not 24, four pric
 admissions that drive both Reg Type and attendee count, a `26-01`-style per-event Reg #,
 no sponsorship concept at all).
 
-**Regression suite: 85/85 passing** as of the last time it was run this session (`node
-App/test/run-tests.js`), covering fixture-based generation (registrations, attendees,
-funds, judges, shirt buckets, generation tally, Reg #, event-title fallback chain,
-show-year validation) and an Excel export round-trip. It was run mid-session, right after
-the filter/Summary changes below — this session's later checkpoint step did not re-run it
-per its own documented scope.
+**Regression suite: 85/85 passing**, confirmed freshly on 2026-08-27 with an explicit
+`node App/test/run-tests.js` run (covering fixture-based generation — registrations,
+attendees, funds, judges, shirt buckets, generation tally, Reg #, event-title fallback
+chain, show-year validation — and an Excel export round-trip).
 
-**Version:** `App/version.json` — stamped **2.0** in the currently-live
-`App/ETCCVetteFest.html` / `app-bundle.html` on the server (deployed 2026-08-24). The file
-itself now reads `{major:2, minor:1}`, since `build.js` bumps-and-stores the *next*
-version on every run — the next build will stamp "2.1".
+**Version:** `App/version.json` — stamped **2.2** in the currently-live
+`App/ETCCVetteFest.html` / `app-bundle.html` on the server (deployed 2026-08-27). The file
+itself now reads `{major:2, minor:3}`, since `build.js` bumps-and-stores the *next*
+version on every run — the next build will stamp "2.3".
 
 **Live URL:** https://etccapps.com/apps/vettefest/ — site password and Developer password
 were both set this session (the user supplied plaintext values in chat, which were hashed
@@ -60,11 +62,69 @@ Data model: one JSON dataset per event year under `data/<year>/` on the server
 `data/shows.json` registry — never a flat single-event layout, so there's no migration
 step needed for a fresh install.
 
-**Deployed** as of this session — `App/deploy/secrets.php` and `App/deploy/.ftp-credentials`
-both exist on disk (gitignored, never committed), the `vettefest` FTP account exists, and
-`App/deploy/ftp-deploy.sh` has successfully uploaded code multiple times this session. The
-first live event (2026) already has 70 real registrations imported and has been used to
-verify the filter fixes below against real data.
+**Deployed** — `App/deploy/secrets.php` and `App/deploy/.ftp-credentials` both exist on
+disk (gitignored, never committed), the `vettefest` FTP account exists, and
+`App/deploy/ftp-deploy.sh` has successfully uploaded code multiple times. The first live
+event (2026) already has 70 real registrations imported and has been used to verify the
+filter fixes below against real data.
+
+**Git: pushed and working**, as of 2026-08-27 — see that session's entry below for the
+one gotcha (a global credential helper that must be worked around on every push from this
+machine).
+
+## This session's work (2026-08-27)
+
+**1. Resolved the git push permissions problem from 2026-08-24.** The user provided a
+GitHub personal access token (`ghp_...`) scoped for the **ETCCRepo** account/org, and
+confirmed `ETCCRepo` is indeed the correct owner (the 403 was a permissions problem, not
+a wrong-remote problem). Pushing still failed on the first few attempts even with the
+token, though — **this machine has a global `credential.helper = manager` configured**
+(both `--global` and `--system`), which was returning cached **BWERepo** credentials
+before git ever consulted a token-based helper, regardless of what was configured
+locally for this repo. The fix that actually worked:
+```
+git -c credential.helper= -c credential.helper="store --file=.git/etccrepo-credentials" push origin main
+```
+The first `-c credential.helper=` clears the *entire* accumulated helper list (system +
+global + local) rather than appending to it — without that, `manager`'s cached
+BWERepo answer is tried first and the push fails before the store-based helper ever runs.
+The token was written to `.git/etccrepo-credentials` (inside `.git/`, so it can never be
+committed or pushed) and the repo's local `credential.helper` config was also set to
+`store --file=.git/etccrepo-credentials` for future use — but **that local config alone
+was not sufficient to win over the global `manager` helper**; every future push from this
+machine needs the same `-c credential.helper= -c credential.helper=...` override, not a
+bare `git push`. This is the single most important gotcha for a future session: if
+`git push origin main` 403s as BWERepo again, this is why, and the fix is the command
+above, not a token problem.
+
+Verified: pushed the two commits from 2026-08-24 (`82e09ec`, `249783d`) plus this
+session's own commit (`95f5c39`, the favicon fix below) — `git ls-remote origin main`
+confirms the remote head matches local.
+
+**2. Added a favicon to the login page.** User asked to "update favicon to the etcc logo
+using the same technique as `Z:\Backup\Websites\SilentAuctionManager`". Investigated SAM's
+`index.html` (`<link rel="icon" href="Images/ETCClogoWhiteBackground.png" />` — a plain
+relative path, deliberately with **no `type` attribute**, per that file's own comment,
+since SAM's favicon can be repointed at any format via Settings > Club Branding). Found
+that `App/build.js` **already** embeds the ETCC logo as the main app bundle's favicon (as
+a `type="image/png"` data URI — this was already correct, no change needed there), but
+`App/deploy/_login.html` — the separate static login screen, not built by `build.js` — had
+**no `<link rel="icon">` at all**. Added one there:
+`<link rel="icon" href="ETCClogoWhiteBackground.png" />`, matching SAM's exact
+technique (plain relative path, no `type`). Verified live via
+`document.querySelector('link[rel="icon"]').getAttribute('href')` on
+https://etccapps.com/apps/vettefest/ → returns `"ETCClogoWhiteBackground.png"`. No
+`app.js`/`logic.js` changes, so the regression suite was unaffected (still 85/85).
+
+**3. Checkpoint and push.** Ran `/ETCCVetteFestCheckpoint` (no explicit version arg this
+time, so `build.js`'s normal auto-increment applied): built (stamped **v2.2**, bumped
+`version.json` to `{major:2, minor:3}`), deployed successfully (full file listing showed
+the updated `_login.html` timestamp), committed as `95f5c39` ("Add ETCC logo favicon to
+the login page, bump to v2.2"), and pushed using the credential-helper override above.
+
+**4. Regression suite.** Ran `node App/test/run-tests.js` on explicit request — **85/85
+passing**, no regressions from the favicon change (expected, since it touched no
+JS logic).
 
 ## This session's work (2026-08-24)
 
@@ -161,37 +221,36 @@ generally), so it would have been committed and pushed to a shared repo if not c
 Confirmed `secrets.php` and `.ftp-credentials` themselves were correctly excluded before
 committing.
 
-**Push failed and is still failing**: `git push -u origin main` returns
-`remote: Permission to ETCCRepo/ETCCVetteFest.git denied to BWERepo` / HTTP 403. The
-git credentials configured on this machine authenticate as a GitHub account/token called
-**BWERepo**, which has no write access to the **ETCCRepo** org's `ETCCVetteFest` repo.
-This was surfaced to the user, who replied "push to https://github.com/ETCCRepo/ETCCVetteFest"
-confirming the URL is correct — but the retry failed with the identical 403, meaning the
-problem is account permissions, not a wrong remote. **This is unresolved** — see "Known
-follow-ups".
+**Push failed at the time**: `git push -u origin main` returned
+`remote: Permission to ETCCRepo/ETCCVetteFest.git denied to BWERepo` / HTTP 403 — the git
+credentials configured on this machine authenticate as a GitHub account/token called
+**BWERepo**, which had no write access to the **ETCCRepo** org's `ETCCVetteFest` repo.
+This was surfaced to the user, who confirmed `ETCCRepo` was the correct owner (so not a
+wrong-remote problem). **Resolved in the 2026-08-27 session above** — the user supplied a
+personal access token, but the actual fix needed a credential-helper override beyond just
+having the token; see that section and "Known follow-ups" for the exact command.
 
 ## Known follow-ups / next steps
 
-1. **Git push is blocked on a permissions problem, not a code problem.** Commit `82e09ec`
-   (and this session's PROJECT_STATUS.md update, once committed) exist only in the local
-   repo at `Z:\Backup\Websites\VetteFest`. To unblock: either add the **BWERepo** GitHub
-   account/token as a collaborator with write access on `ETCCRepo/ETCCVetteFest`, or
-   provide different credentials (e.g. a PAT for an account that already has access), or
-   confirm `ETCCRepo` is actually the intended owner at all. A future session should try
-   `git push -u origin main` again after the user says this is fixed — if it still 403s,
-   don't just retry silently, surface it the same way this session did.
+1. **Git push needs a manual credential-helper override every time, on this machine.**
+   `git push origin main` alone will 403 as **BWERepo** because a global
+   `credential.helper = manager` (system + global config, not this repo) wins over the
+   repo-local `store` helper otherwise. Always push with:
+   ```
+   git -c credential.helper= -c credential.helper="store --file=.git/etccrepo-credentials" push origin main
+   ```
+   The token itself lives in `.git/etccrepo-credentials` (untracked, inside `.git/`,
+   cannot be committed). This is a standing operational quirk of this machine, not
+   something to "fix" by editing global git config (that's out of scope and could break
+   other repos that rely on `manager` legitimately).
 2. Nothing in the application code itself is known-broken as of this writing — a scan for
-   TODO/FIXME/placeholder markers across `App/src` and `App/deploy` earlier this session
-   turned up nothing beyond literal HTML `placeholder=` attributes.
-3. The regression suite was last confirmed 85/85 mid-session, right after the `app.js`
-   filter/Summary changes above — it was **not** re-run as part of the checkpoint or this
-   end-of-session step (both explicitly out of scope for those skills). A session that
-   wants a fresh confirmation should just run `node App/test/run-tests.js`.
-4. Only the 2026 event has been exercised on the live site (70 real registrations
-   imported and used to verify the filter fixes above). No second event/year has been
-   created yet, so per-year data isolation (`vettefest_valid_year()` etc.) is unverified
-   against more than one year's worth of real data — this mirrors a similar open item the
-   CarShow app had after ITS multi-year work landed.
+   TODO/FIXME/placeholder markers across `App/src` and `App/deploy` has twice turned up
+   nothing beyond literal HTML `placeholder=` attributes.
+3. Only the 2026 event has been exercised on the live site (70 real registrations
+   imported and used to verify the filter fixes in the 2026-08-24 entry below). No second
+   event/year has been created yet, so per-year data isolation (`vettefest_valid_year()`
+   etc.) is unverified against more than one year's worth of real data — this mirrors a
+   similar open item the CarShow app had after ITS multi-year work landed.
 
 ## Architecture notes worth preserving
 
