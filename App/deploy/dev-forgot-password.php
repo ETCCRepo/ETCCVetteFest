@@ -35,8 +35,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $errors[] = 'Could not start a password reset right now — please try again in a moment.';
     } else {
         $resetUrl = $RESET_URL_BASE . '?token=' . $token;
-        $subject = 'ETCC Car Show app — Developer password reset requested';
-        $body = "A Developer password reset was requested for the Car Show app.\n\n" .
+        $subject = 'ETCC Vette Fest app — Developer password reset requested';
+        $body = "A Developer password reset was requested for the Vette Fest app.\n\n" .
             "Reset it here (link expires in 1 hour):\n" . $resetUrl . "\n\n" .
             "If you didn't request this, you can ignore this email — the link " .
             "expires on its own and nothing changes until someone opens it.";
@@ -53,7 +53,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>ETCC Car Show — Forgot Developer Password</title>
+<title>ETCC Vette Fest — Forgot Developer Password</title>
 <link rel="icon" type="image/png" href="ETCClogoWhiteBackground.png">
 <link rel="apple-touch-icon" href="ETCClogoWhiteBackground.png">
 <style>
@@ -74,7 +74,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 <body>
 <div class="wrap">
   <h1>Forgot Developer Password</h1>
-  <div class="sub">East Tennessee Corvette Club — Car Show app</div>
+  <div class="sub">East Tennessee Corvette Club — Vette Fest app</div>
   <div class="panel">
     <?php if ($sent): ?>
       <p class="success">A reset link has been emailed. Check the club's admin inbox — it's valid for 1 hour.</p>

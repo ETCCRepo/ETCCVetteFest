@@ -64,7 +64,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $valid) {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>ETCC Car Show — Reset Developer Password</title>
+<title>ETCC Vette Fest — Reset Developer Password</title>
 <link rel="icon" type="image/png" href="ETCClogoWhiteBackground.png">
 <link rel="apple-touch-icon" href="ETCClogoWhiteBackground.png">
 <style>
@@ -88,7 +88,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $valid) {
 <body>
 <div class="wrap">
   <h1>Reset Developer Password</h1>
-  <div class="sub">East Tennessee Corvette Club — Car Show app</div>
+  <div class="sub">East Tennessee Corvette Club — Vette Fest app</div>
   <div class="panel">
     <?php if ($done): ?>
       <p class="success">Developer password changed. You can use it now.</p>
