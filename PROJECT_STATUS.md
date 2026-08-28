@@ -1,16 +1,22 @@
 # ETCC Vette Fest App — Project Status
 
-Last updated: 2026-08-27 (end of session). **The git push problem from 2026-08-24 is
-resolved** — the user supplied a personal access token and pushes now work (with a
-one-time-per-session credential-helper override, see below). Added a favicon to the
-login page (the main app bundle already had one), shipped as v2.2, and confirmed the
-regression suite is still 85/85.
+Last updated: 2026-08-28 (end of session). **Fixed the favicon not showing on iOS**
+(iPhone/iPad) — needed `apple-touch-icon`, not just `<link rel="icon">` — across the main
+app and every standalone deploy page, and while in there also fixed a real leftover bug:
+four password-reset pages still said "ETCC Car Show" (copy-pasted from the sibling app,
+never updated). Two checkpoints shipped, v2.4 then v2.5, both pushed.
 
-Previous update: 2026-08-24 (end of session). **The app went live for the first time** —
+Previous update: 2026-08-27 (end of session). The git push problem from 2026-08-24 was
+resolved — the user supplied a personal access token and pushes now work (with a
+one-time-per-session credential-helper override, see "Known follow-ups"). Added a
+favicon to the login page (the main app bundle already had one at the time), shipped as
+v2.2.
+
+Earlier update: 2026-08-24 (end of session). **The app went live for the first time** —
 first deploy completed, two Registration-tab filter bugs fixed, the Summary tab was made
 to always show the full dataset, and a Total row was added to the Car Show matrix.
 
-Earlier update: 2026-08-23 (end of session). No prior PROJECT_STATUS.md existed for this
+Earliest update: 2026-08-23 (end of session). No prior PROJECT_STATUS.md existed for this
 project before that — it was the first one, written after the fact by inspecting the repo
 rather than from session memory, since the app was already substantially built when that
 session began.
@@ -24,15 +30,15 @@ list of deliberate differences — unisex shirts in 12 buckets not 24, four pric
 admissions that drive both Reg Type and attendee count, a `26-01`-style per-event Reg #,
 no sponsorship concept at all).
 
-**Regression suite: 85/85 passing**, confirmed freshly on 2026-08-27 with an explicit
+**Regression suite: 85/85 passing**, confirmed freshly on 2026-08-28 with an explicit
 `node App/test/run-tests.js` run (covering fixture-based generation — registrations,
 attendees, funds, judges, shirt buckets, generation tally, Reg #, event-title fallback
 chain, show-year validation — and an Excel export round-trip).
 
-**Version:** `App/version.json` — stamped **2.2** in the currently-live
-`App/ETCCVetteFest.html` / `app-bundle.html` on the server (deployed 2026-08-27). The file
-itself now reads `{major:2, minor:3}`, since `build.js` bumps-and-stores the *next*
-version on every run — the next build will stamp "2.3".
+**Version:** `App/version.json` — stamped **2.5** in the currently-live
+`App/ETCCVetteFest.html` / `app-bundle.html` on the server (deployed 2026-08-28). The file
+itself now reads `{major:2, minor:6}`, since `build.js` bumps-and-stores the *next*
+version on every run — the next build will stamp "2.6".
 
 **Live URL:** https://etccapps.com/apps/vettefest/ — site password and Developer password
 were both set this session (the user supplied plaintext values in chat, which were hashed
@@ -71,6 +77,60 @@ filter fixes below against real data.
 **Git: pushed and working**, as of 2026-08-27 — see that session's entry below for the
 one gotcha (a global credential helper that must be worked around on every push from this
 machine).
+
+## This session's work (2026-08-28)
+
+**1. Favicon didn't appear on iPhone/iPad.** User reported this directly. Root cause:
+**iOS Safari ignores a plain `<link rel="icon">`** — it specifically requires
+`<link rel="apple-touch-icon">` for both "Add to Home Screen" and (inconsistently) the
+tab bar itself. The 2026-08-27 session's favicon fix only added `rel="icon"`, which
+works on desktop/Android but never had a chance on iOS. Fixed by checking how the sibling
+**CarShow** app solved the identical problem (`App/build.js:84-88` there) and matching it
+exactly:
+- `App/build.js`: switched the main app bundle's favicon from an inline base64 data URI
+  (`logoDataUri`) to a **plain relative file link** (`ETCClogoWhiteBackground.png`) —
+  same technique SilentAuctionManager's `index.html` and CarShow both use, lighter than
+  an inline data URI (~25KB smaller bundle: 1310KB → 1285KB) — and added
+  `<link rel="apple-touch-icon" href="ETCClogoWhiteBackground.png">` right after it.
+- Added the same `apple-touch-icon` line to every standalone page with its own `<head>`:
+  `App/deploy/_login.html` (already had `rel="icon"` from 2026-08-27, just needed the
+  apple- one added), `forgot-password.php`, `reset-password.php`,
+  `dev-forgot-password.php`, `dev-reset-password.php`, `registrations-import.php`.
+- Verified live: fetched `https://etccapps.com/apps/vettefest/ETCClogoWhiteBackground.png`
+  directly (loads fine, 150×116 PNG) and confirmed both `<link rel="icon">` and
+  `<link rel="apple-touch-icon">` are present in the served login page's DOM via
+  `document.querySelectorAll('link[rel*="icon"]')`.
+- Deployed as **v2.4**. Regression suite unaffected (85/85 — no JS logic touched, only
+  `build.js`'s HTML-string assembly and static `<head>` tags in PHP files).
+
+**2. Found and fixed a real leftover branding bug while in those files.** While adding
+the apple-touch-icon lines, noticed `forgot-password.php`, `reset-password.php`,
+`dev-forgot-password.php`, and `dev-reset-password.php` all still said **"ETCC Car
+Show"** — in their `<title>`, the page subtitle (`East Tennessee Corvette Club — Car
+Show app`), and (for the two forgot-password variants) the actual **email subject and
+body** sent to the admin inbox. This is clearly a copy-paste leftover from porting these
+files from the sibling CarShow app that was never caught — `registrations-import.php`'s
+equivalent title was already correct ("ETCC Vette Fest — Import Registrations"), so
+these four were simply missed. First surfaced as a spawned background-task suggestion
+(`task_77ea9ac3`), but the user said "fix the ETCC Car Show branding now" so it was done
+inline instead and the spawned task was withdrawn/dismissed rather than run separately.
+Fixed all four files' `<title>`, subtitle `<div>`, and (for the two forgot-password
+files) the `$subject`/`$body` PHP strings to say "Vette Fest" instead of "Car Show".
+**Deliberately left alone**: every other "Car Show" string in the codebase (`App/src/*`,
+`App/deploy/README.md`, test fixtures) — those are all legitimate references to the
+**Car Show feature/tab** within Vette Fest itself (e.g. "Car Show Only Admission", the
+Summary tab's "Car Show" section) or to the sibling app by name in comparison comments,
+not stray branding; grepped the whole `App/` tree for "Car Show" to confirm before
+stopping. Copy-only fix, regression suite unaffected (85/85).
+
+**3. Two checkpoints this session** (build → deploy → commit → push, each time):
+- v2.4: build.js favicon fix + apple-touch-icon additions. Commit `96282d8`.
+- v2.5: the four password-page branding fixes. Commit `9a0f6c2`.
+
+Both pushed successfully to `origin/main` using the credential-helper override from the
+2026-08-27 entry below (`git -c credential.helper= -c
+credential.helper="store --file=.git/etccrepo-credentials" push origin main`) — still
+required every time, a bare `git push` still 403s as BWERepo on this machine.
 
 ## This session's work (2026-08-27)
 
@@ -245,7 +305,10 @@ having the token; see that section and "Known follow-ups" for the exact command.
    other repos that rely on `manager` legitimately).
 2. Nothing in the application code itself is known-broken as of this writing — a scan for
    TODO/FIXME/placeholder markers across `App/src` and `App/deploy` has twice turned up
-   nothing beyond literal HTML `placeholder=` attributes.
+   nothing beyond literal HTML `placeholder=` attributes, and a full-tree grep for "Car
+   Show" (2026-08-28, after fixing the four leftover-branding pages above) confirmed every
+   remaining occurrence is a legitimate reference to the Car Show feature/tab within Vette
+   Fest itself, or to the sibling app by name — not stray copy-paste.
 3. Only the 2026 event has been exercised on the live site (70 real registrations
    imported and used to verify the filter fixes in the 2026-08-24 entry below). No second
    event/year has been created yet, so per-year data isolation (`vettefest_valid_year()`
