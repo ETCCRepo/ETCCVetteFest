@@ -78,6 +78,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $valid) {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>ETCC Car Show — Reset Password</title>
+<link rel="icon" type="image/png" href="ETCClogoWhiteBackground.png">
+<link rel="apple-touch-icon" href="ETCClogoWhiteBackground.png">
 <style>
   :root { --red:#b0141e; --red-dark:#7d0e15; --ink:#1a1a1a; --muted:#667085; --line:#e3e6ea; --bg:#f4f6f8; --panel:#fff; --good:#147d3a; }
   * { box-sizing: border-box; }

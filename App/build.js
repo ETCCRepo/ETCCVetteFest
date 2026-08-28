@@ -77,7 +77,17 @@ var html =
 '<html lang="en">\n<head>\n<meta charset="utf-8">\n' +
 '<meta name="viewport" content="width=device-width, initial-scale=1">\n' +
 '<title>ETCC Vette Fest — Registration</title>\n' +
-'<link rel="icon" type="image/png" href="' + logoDataUri + '">\n' +
+// Plain relative link to the deployed PNG (ftp-deploy.sh uploads it to the
+// site root as ETCClogoWhiteBackground.png) rather than an inlined base64
+// data URI — same technique SilentAuctionManager's index.html uses, and
+// what the sibling CarShow app switched to for the same reason: a real
+// file request is simpler than a heavy inline data URI and matches this
+// club's other apps.
+'<link rel="icon" type="image/png" href="ETCClogoWhiteBackground.png">\n' +
+// iOS Safari ignores a plain <link rel="icon"> for "Add to Home Screen" (and
+// is inconsistent about showing it in the tab bar at all) — it specifically
+// wants apple-touch-icon. Same file, no separate asset needed.
+'<link rel="apple-touch-icon" href="ETCClogoWhiteBackground.png">\n' +
 '<style>\n' + css + '\n</style>\n</head>\n<body>\n' +
 '<header class="app">\n' +
 '  <div class="hdr-left"><img src="' + logoDataUri + '" alt="ETCC Logo" class="hdr-logo"></div>\n' +

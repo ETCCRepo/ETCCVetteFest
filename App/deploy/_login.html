@@ -5,6 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>ETCC Vette Fest</title>
 <link rel="icon" href="ETCClogoWhiteBackground.png" />
+<!-- iOS Safari ignores a plain <link rel="icon"> for "Add to Home Screen" and is
+     inconsistent about showing it in the tab bar at all — it specifically wants
+     apple-touch-icon. Same file, no separate asset needed. -->
+<link rel="apple-touch-icon" href="ETCClogoWhiteBackground.png" />
 <style>
   html, body { margin: 0; height: 100%; }
   #password-screen {
