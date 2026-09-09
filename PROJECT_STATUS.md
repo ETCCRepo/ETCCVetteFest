@@ -1,8 +1,9 @@
 # ETCC Vette Fest App — Project Status
 
-Last updated: 2026-09-09. **The Developer password was changed to match the site
-password** — a config-only change, no code/version/deploy involved. See "This session's
-work (2026-09-09)" below.
+Last updated: 2026-09-09 (end of session). **The Developer password was changed to match
+the site password** (config-only, no code touched) and a routine checkpoint shipped
+**v2.6** (build-artifact-only commit — no source diff beyond the version bump). See
+"This session's work (2026-09-09)" below.
 
 Previous update: 2026-08-28 (end of session). **Fixed the favicon not showing on iOS**
 (iPhone/iPad) — needed `apple-touch-icon`, not just `<link rel="icon">` — across the main
@@ -34,15 +35,18 @@ list of deliberate differences — unisex shirts in 12 buckets not 24, four pric
 admissions that drive both Reg Type and attendee count, a `26-01`-style per-event Reg #,
 no sponsorship concept at all).
 
-**Regression suite: 85/85 passing**, confirmed freshly on 2026-08-28 with an explicit
-`node App/test/run-tests.js` run (covering fixture-based generation — registrations,
-attendees, funds, judges, shirt buckets, generation tally, Reg #, event-title fallback
-chain, show-year validation — and an Excel export round-trip).
+**Regression suite: 85/85 passing** as of the last explicit run, 2026-08-28 (covering
+fixture-based generation — registrations, attendees, funds, judges, shirt buckets,
+generation tally, Reg #, event-title fallback chain, show-year validation — and an Excel
+export round-trip). **Not re-run on 2026-09-09** — that session's checkpoint skill
+explicitly excludes running the suite, and no `app.js`/`logic.js` source changed anyway
+(the only change was the Developer password, and the checkpoint commit was
+build-artifacts-only), so there was nothing new to verify.
 
-**Version:** `App/version.json` — stamped **2.5** in the currently-live
-`App/ETCCVetteFest.html` / `app-bundle.html` on the server (deployed 2026-08-28). The file
-itself now reads `{major:2, minor:6}`, since `build.js` bumps-and-stores the *next*
-version on every run — the next build will stamp "2.6".
+**Version:** `App/version.json` — stamped **2.6** in the currently-live
+`App/ETCCVetteFest.html` / `app-bundle.html` on the server (deployed 2026-09-09). The file
+itself now reads `{major:2, minor:7}`, since `build.js` bumps-and-stores the *next*
+version on every run — the next build will stamp "2.7".
 
 **Live URL:** https://etccapps.com/apps/vettefest/ — as of 2026-09-09, **the Developer
 password is the same as the site password** (`$DEV_PASSWORD_HASH` in `secrets.php` was set
@@ -105,8 +109,17 @@ was needed:
   `{"success":false}`, confirming the old hash was actually replaced, not just matched by
   coincidence.
 
-Nothing else changed this session. `App/version.json` is untouched, still reads
-`{major:2, minor:6}` from the 2026-08-28 session — the live site is still v2.5.
+**Then a routine `/ETCCVetteFestCheckpoint` was run** (invoked with a chained-but-typo'd
+`& /ETCCVettsFestEnd` argument, treated as "checkpoint, then also wrap up" — hence this
+same-day entry covering both). Build stamped **v2.6** and bumped `version.json` to
+`{major:2, minor:7}`; deploy succeeded (full file listing confirmed, including the
+`secrets.php` uploaded earlier in this session showing its correct upload timestamp);
+committed as `fb5e0ad` — **build-artifacts-only** (`App/ETCCVetteFest.html` +
+`App/version.json`), since the password change touched only the gitignored
+`secrets.php`, not tracked source. Pushed successfully after the expected
+credential-helper retry (`git push origin main` alone still 403s as BWERepo on this
+machine — see "Known follow-ups"). Regression suite was **not** run, per the checkpoint
+skill's own scope, and there was no source change to justify one anyway.
 
 ## This session's work (2026-08-28)
 
