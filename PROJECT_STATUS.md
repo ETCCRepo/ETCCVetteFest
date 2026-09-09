@@ -1,6 +1,10 @@
 # ETCC Vette Fest App — Project Status
 
-Last updated: 2026-08-28 (end of session). **Fixed the favicon not showing on iOS**
+Last updated: 2026-09-09. **The Developer password was changed to match the site
+password** — a config-only change, no code/version/deploy involved. See "This session's
+work (2026-09-09)" below.
+
+Previous update: 2026-08-28 (end of session). **Fixed the favicon not showing on iOS**
 (iPhone/iPad) — needed `apple-touch-icon`, not just `<link rel="icon">` — across the main
 app and every standalone deploy page, and while in there also fixed a real leftover bug:
 four password-reset pages still said "ETCC Car Show" (copy-pasted from the sibling app,
@@ -40,10 +44,10 @@ chain, show-year validation — and an Excel export round-trip).
 itself now reads `{major:2, minor:6}`, since `build.js` bumps-and-stores the *next*
 version on every run — the next build will stamp "2.6".
 
-**Live URL:** https://etccapps.com/apps/vettefest/ — site password and Developer password
-were both set this session (the user supplied plaintext values in chat, which were hashed
-and written to `App/deploy/secrets.php` — gitignored, never committed). Neither password
-is recorded in this file; check with the user or `secrets.php` on a machine that has it.
+**Live URL:** https://etccapps.com/apps/vettefest/ — as of 2026-09-09, **the Developer
+password is the same as the site password** (`$DEV_PASSWORD_HASH` in `secrets.php` was set
+to the same hash as `$PASSWORD_HASH`, at the user's request). Neither password is recorded
+in this file; check with the user or `App/deploy/secrets.php` on a machine that has it.
 
 ### Front end (`App/src/`)
 - `app.js` — the SPA (~109KB), `logic.js` — pure business logic (~17.5KB, mirrors
@@ -77,6 +81,32 @@ filter fixes below against real data.
 **Git: pushed and working**, as of 2026-08-27 — see that session's entry below for the
 one gotcha (a global credential helper that must be worked around on every push from this
 machine).
+
+## This session's work (2026-09-09)
+
+**Developer password changed to match the site password**, at the user's explicit
+request ("change developer password to the web site password"). This is a **config-only
+change** — no `app.js`/`logic.js`/PHP code was touched, so no build/version bump/checkpoint
+was needed:
+- Edited `App/deploy/secrets.php` locally: set `$DEV_PASSWORD_HASH` to the exact same
+  hash string already sitting in `$PASSWORD_HASH` (no new `openssl passwd` hash needed —
+  reusing the existing hash is sufficient since `hash_equals($DEV_PASSWORD_HASH,
+  crypt($pw, $DEV_PASSWORD_HASH))` in `index.php`'s `dev_login` handler just needs the two
+  hashes to match; the underlying plaintext doesn't need to be known or re-derived).
+- Uploaded `secrets.php` to the server by hand via a raw `curl --ftp-ssl -T`, the same
+  one-off technique used for the very first deploy back on 2026-08-24 — `ftp-deploy.sh`
+  itself deliberately never touches this file (see its trailing comment / the README's
+  "Two passwords" section), so a manual upload is the *only* way `secrets.php` changes
+  ever reach the server.
+- Verified live directly against the two POST endpoints in `index.php` (bypassing the UI,
+  which wasn't reachable from this session's browser tooling at the time) — confirmed
+  `action=dev_login` with the site password now returns `{"success":true}`, and the **old**
+  Developer password (`Gladiator#1`, set back on 2026-08-24) now returns
+  `{"success":false}`, confirming the old hash was actually replaced, not just matched by
+  coincidence.
+
+Nothing else changed this session. `App/version.json` is untouched, still reads
+`{major:2, minor:6}` from the 2026-08-28 session — the live site is still v2.5.
 
 ## This session's work (2026-08-28)
 
