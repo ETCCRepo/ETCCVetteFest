@@ -1,9 +1,14 @@
 # ETCC Vette Fest App — Project Status
 
-Last updated: 2026-09-09 (end of session). **The Developer password was changed to match
-the site password** (config-only, no code touched) and a routine checkpoint shipped
-**v2.6** (build-artifact-only commit — no source diff beyond the version bump). See
-"This session's work (2026-09-09)" below.
+Last updated: 2026-09-10 (end of session). **Added a "Setup" tab** (after Reports) that
+holds Import Registrations (moved out of the Developer menu) and a brand-new **Import
+Flyer** feature, plus a **Print Flyer** button on the Reports tab and a new
+`App/deploy/flyer.php` endpoint. Two checkpoints shipped, **v2.7** (feature) then **v2.8**
+(bump-only). See "This session's work (2026-09-10)" below.
+
+Previous update: 2026-09-09 (end of session). **The Developer password was changed to
+match the site password** (config-only, no code touched) and a routine checkpoint shipped
+**v2.6** (build-artifact-only commit — no source diff beyond the version bump).
 
 Previous update: 2026-08-28 (end of session). **Fixed the favicon not showing on iOS**
 (iPhone/iPad) — needed `apple-touch-icon`, not just `<link rel="icon">` — across the main
@@ -35,18 +40,18 @@ list of deliberate differences — unisex shirts in 12 buckets not 24, four pric
 admissions that drive both Reg Type and attendee count, a `26-01`-style per-event Reg #,
 no sponsorship concept at all).
 
-**Regression suite: 85/85 passing** as of the last explicit run, 2026-08-28 (covering
-fixture-based generation — registrations, attendees, funds, judges, shirt buckets,
-generation tally, Reg #, event-title fallback chain, show-year validation — and an Excel
-export round-trip). **Not re-run on 2026-09-09** — that session's checkpoint skill
-explicitly excludes running the suite, and no `app.js`/`logic.js` source changed anyway
-(the only change was the Developer password, and the checkpoint commit was
-build-artifacts-only), so there was nothing new to verify.
+**Regression suite: 85/85 passing**, re-run explicitly on 2026-09-10 after the Setup-tab
+work (covering fixture-based generation — registrations, attendees, funds, judges, shirt
+buckets, generation tally, Reg #, event-title fallback chain, show-year validation — and
+an Excel export round-trip). The suite is logic-only (`test/run-tests.js` +
+`src/regression-tests.js`) and does not exercise any UI/tab code, so the Setup tab / flyer
+feature was instead verified by hand against the live 2026 event (see the session entry
+below).
 
-**Version:** `App/version.json` — stamped **2.6** in the currently-live
-`App/ETCCVetteFest.html` / `app-bundle.html` on the server (deployed 2026-09-09). The file
-itself now reads `{major:2, minor:7}`, since `build.js` bumps-and-stores the *next*
-version on every run — the next build will stamp "2.7".
+**Version:** `App/version.json` — stamped **2.8** in the currently-live
+`App/ETCCVetteFest.html` / `app-bundle.html` on the server (deployed 2026-09-10). The file
+itself now reads `{major:2, minor:9}`, since `build.js` bumps-and-stores the *next*
+version on every run — the next build will stamp "2.9".
 
 **Live URL:** https://etccapps.com/apps/vettefest/ — as of 2026-09-09, **the Developer
 password is the same as the site password** (`$DEV_PASSWORD_HASH` in `secrets.php` was set
@@ -69,12 +74,21 @@ the Developer password), `app-settings.php`, `deleted-registrations.php`,
 `registration-overrides.php`, `registrations-upload.php` / `registrations-import.php`,
 `send-tshirt-order-email.php`, forgot/reset-password pairs (site + separate Developer
 password), `logout.php`, `.htaccess`, `secrets.example.php`, `ftp-deploy.sh`,
-`upload-registrations.js`.
+`upload-registrations.js`. Plus, added 2026-09-10: **`flyer.php`** — per-event event-flyer
+store (`POST` uploads an image/PDF, `GET` serves it, `GET ?meta=1` returns metadata),
+backing the Setup tab's Import Flyer and the Reports tab's Print Flyer.
+
+`ftp-deploy.sh` uploads an **explicit hand-maintained list** of files (not a `*.php`
+glob) — a new deploy/*.php file MUST be added to that list or it silently never ships
+(this bit the flyer.php work mid-session: the first deploy ran clean but flyer.php wasn't
+on the server until it was added to the script).
 
 Data model: one JSON dataset per event year under `data/<year>/` on the server
-(registrations, deleted-registrations, overrides, settings), plus a global
-`data/shows.json` registry — never a flat single-event layout, so there's no migration
-step needed for a fresh install.
+(registrations, deleted-registrations, overrides, settings, **and as of 2026-09-10 the
+flyer** — `flyer.json`, the flyer bytes stored base64 inside it so it sits under the same
+`*.json` deny rule), plus a global `data/shows.json` registry — never a flat single-event
+layout, so there's no migration step needed for a fresh install. The per-event file list
+lives in `vettefest_show_files()` in `lib.php`.
 
 **Deployed** — `App/deploy/secrets.php` and `App/deploy/.ftp-credentials` both exist on
 disk (gitignored, never committed), the `vettefest` FTP account exists, and
@@ -85,6 +99,88 @@ filter fixes below against real data.
 **Git: pushed and working**, as of 2026-08-27 — see that session's entry below for the
 one gotcha (a global credential helper that must be worked around on every push from this
 machine).
+
+## This session's work (2026-09-10)
+
+**New "Setup" tab, Import Flyer feature, and Print Flyer report.** The user asked to
+"add a Setup tab after Reports. add the import registrations, import flyer. add Print
+Flyer to Reports tab" — and, mid-session, "remove import registrations from developer".
+
+**1. Setup tab (`buildSetupView()` in `App/src/app.js`).** New `state.tab` value
+`"setup"`; added `mk("setup", "Setup")` as the last tab in `buildTabs()` (after Reports);
+`renderViews()` branches to `buildSetupView()` before the `!state.result` guard, so it
+works before any CSV is imported (same as the T-Shirts/Reports tabs). Two panels:
+- **Import Registrations** — a link button (`<a class="btn primary" href="registrations-import.php" target="_blank">`)
+  to the existing upload form, plus a "Current data loaded: <date>" line from
+  `state.result.meta.generatedAt`. This is the same `registrations-import.php` page as
+  before — only its entry point moved.
+- **Import Flyer** — a `<input type="file" accept="image/*,application/pdf">` + Upload
+  button wired to `uploadFlyer(file)`, which POSTs a `FormData` to
+  `SITE_CONFIG.flyerApiUrl`. On success it updates `state.flyer` in place (no reload) so
+  the "current flyer" line and the Reports button react immediately. Shows current flyer
+  name/upload-date + a "View current flyer" link when one exists.
+
+**2. `App/deploy/flyer.php` (new).** Per-event, session-gated (same pattern as
+`registrations-import.php`), scoped to `$_SESSION['vettefest_year']`.
+- `POST` (multipart, field name `flyer`): validates the **actual** file bytes with
+  `finfo(FILEINFO_MIME_TYPE)` (not the browser-declared type) against a JPG/PNG/GIF/WebP/PDF
+  allowlist, 12 MB cap, then stores `{mime, name, dataB64, uploadedAt}` via
+  `vettefest_write_json()` to `data/<year>/flyer.json`. Returns
+  `{success, flyer:{mime,name,uploadedAt}}`.
+- `GET`: streams the decoded bytes with the stored `Content-Type` and
+  `Content-Disposition: inline`. `GET ?meta=1`: returns just `{exists, mime, name, uploadedAt}`.
+- The flyer is public marketing material, not PII, but it's stored base64-in-JSON anyway
+  so it's covered by the existing `.htaccess` `*.json` deny — `flyer.php` is the only
+  read path.
+
+**3. `App/deploy/index.php`.** Added `'flyerApiUrl' => 'flyer.php'` to `$perShowUrls` (so
+the client gets `flyer.php?year=<year>`), and a boot part emitting
+`window.__vettefest.ingestFlyer({exists, mime, name, uploadedAt})` — **metadata only, never
+the base64 bytes** (a flyer can be several MB; the Reports/Setup tabs fetch the actual
+file from `flyer.php` on demand). New API method `ingestFlyer()` in the `window.__vettefest`
+object sets `state.flyer`.
+
+**4. `App/deploy/lib.php`.** Added `'flyer.json'` to `vettefest_show_files()`.
+
+**5. `App/deploy/ftp-deploy.sh`.** Added `upload "flyer.php"` to the explicit file list.
+**Gotcha discovered:** the deploy script uploads a hand-maintained list, not a glob — the
+first deploy this session ran clean but `flyer.php` simply wasn't on the server until it
+was added to the list. Any future `deploy/*.php` needs the same treatment.
+
+**6. Print Flyer (Reports tab).** New `🖼️ Print Flyer` button in `buildReportsView()`,
+`disabled` unless `state.flyer.exists`. `printFlyer()` deliberately does NOT use the
+`#printHost` + `window.print()` path the four data reports use — a flyer is a single
+full-bleed graphic of arbitrary size/orientation and may be a PDF, so it just
+`window.open(SITE_CONFIG.flyerApiUrl, "_blank")` and lets the browser's own image/PDF
+viewer handle the print or save.
+
+**7. Import Registrations removed from the Developer menu** (`buildDeveloperMenuItems()`
+now returns `[settings, regTests, changelog]`), the Developer-login screen subtitle
+updated to drop "Import Registrations", and the no-data empty-state message in
+`renderViews()` changed from "use the menu's Developer → Import Registrations" to "use the
+Setup tab → Import Registrations". Rationale (the user's decision): the
+`registrations-import.php` endpoint was always session-gated, never actually protected by
+the Developer password, so the gate was theatre — the Setup tab carries no extra password
+and neither does the flyer upload.
+
+**8. CSS** (`App/src/styles.css`): `.setup-view` block (max-width 700, styled file
+input), and `.view.setup-view` added to the print-hide rule alongside `tshirt-view` /
+`reports-view`.
+
+**Verification** — done against the **live 2026 event** (regression suite is logic-only
+and covers none of this): logged in, confirmed `window.__vettefestSite.flyerApiUrl` =
+`flyer.php?year=2026` and the Setup tab renders; uploaded a tiny generated PNG via
+`fetch("flyer.php?year=2026", {method:"POST", body: FormData})` → `{success:true}`;
+confirmed `GET` returns it as `image/png` and `?meta=1` returns correct metadata; reloaded
+and confirmed `ingestFlyer` populated `state.flyer`, the Setup tab showed "Current flyer:
+flyer.png" with a working `flyer.php?year=2026` link, and Reports → Print Flyer went from
+disabled to enabled. **The test PNG was then deleted** (`DELE /data/2026/flyer.json` over
+FTP) so the 2026 event is back to no-flyer for the officers. Regression suite **85/85**.
+
+**Checkpoints:** `5fa0c4a` (the feature — 8 files, `flyer.php` new) built/deployed as
+**v2.7**; then `/ETCCVetteFestCheckpoint` ran again for **v2.8** = `0ee102c`
+(build-artifacts-only bump). Both pushed to `origin/main` after the standard
+credential-helper retry.
 
 ## This session's work (2026-09-09)
 
@@ -357,6 +453,15 @@ having the token; see that section and "Known follow-ups" for the exact command.
    event/year has been created yet, so per-year data isolation (`vettefest_valid_year()`
    etc.) is unverified against more than one year's worth of real data — this mirrors a
    similar open item the CarShow app had after ITS multi-year work landed.
+4. **Import Flyer has no "remove flyer" UI** — you can only overwrite it by uploading a
+   different file. If an officer needs the flyer gone entirely, delete
+   `data/<year>/flyer.json` over FTP (or add a `?delete` branch to `flyer.php` + a Remove
+   button on the Setup tab if it's asked for). Also: the flyer/Setup-tab code has **no
+   regression-suite coverage** (the suite is logic-only and doesn't touch tab/UI code) —
+   it was verified by hand against the live site.
+5. **A new `deploy/*.php` file will not ship unless it's added to the explicit upload
+   list in `deploy/ftp-deploy.sh`** — that script uploads a hand-maintained list, not a
+   glob. (Bit the flyer.php work this session before it was noticed.)
 
 ## Architecture notes worth preserving
 
