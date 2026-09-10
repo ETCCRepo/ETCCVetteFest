@@ -279,6 +279,15 @@ th.pinned { z-index: 3; }
 .tshirt-view .form-group textarea { width: 100%; padding: 8px; border: 1px solid var(--line); border-radius: 4px; font-family: inherit; }
 .tshirt-view .form-value { padding: 8px; background: #f5f5f5; border-radius: 4px; }
 
+/* Setup tab — Import Registrations / Import Flyer */
+.setup-view { max-width: 700px; margin: 0 auto; }
+.setup-view .panel { margin-bottom: 20px; }
+.setup-view .form-row { display: block; }
+.setup-view input[type="file"] {
+  width: 100%; padding: 8px; border: 1px solid var(--line); border-radius: 6px;
+  font-family: inherit; font-size: 13px; background: #fff;
+}
+
 /* summary */
 .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 16px; }
 .card { background: #fff; border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
@@ -353,7 +362,7 @@ a.show-open:hover { text-decoration: underline; }
      both are single-class selectors with equal specificity, so source order
      decides the winner, and the tab-specific hide needs to beat the generic
      "always show the current tab" rule. */
-  .view.tshirt-view, .view.reports-view { display: none !important; }
+  .view.tshirt-view, .view.reports-view, .view.setup-view { display: none !important; }
   body { background: #fff; }
   /* Registration tab: hide the on-screen (collapsed-columns) table and show the
      full-column print-only table built fresh by printRegistration() instead.

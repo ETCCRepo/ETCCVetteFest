@@ -334,6 +334,7 @@ function vettefest_show_files() {
         'registrations-data.json',
         'deleted-registrations.json',
         'registration-overrides.json',
-        'app-settings.json'
+        'app-settings.json',
+        'flyer.json'
     ];
 }

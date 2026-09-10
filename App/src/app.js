@@ -37,6 +37,15 @@
 
     tab: "sum",
     detailRow: null,  // registration row currently shown in the detail modal, or null
+
+    // Event flyer — METADATA only ({ exists, mime, name, uploadedAt }), filled
+    // by ingestFlyer() from index.php's boot script. The bytes live server-side
+    // and are fetched from SITE_CONFIG.flyerApiUrl only when actually needed
+    // (the Setup tab's preview link, the Reports tab's Print Flyer).
+    flyer: { exists: false },
+    flyerUploading: false,
+    flyerError: null,
+
     zoom: 1,          // table zoom level (1 = 100%); lets all columns fit without scrolling
     zoomAutoFitDone: false, // the table defaults to "Fit" once per session (not on every
                              // tab switch, so a manual zoom choice sticks)
@@ -281,14 +290,15 @@
 
     app.appendChild(buildTabs());
 
-    // The T-Shirts and Reports tabs handle their own empty states, so they
-    // work before any CSV pair has been imported.
+    // The T-Shirts, Reports and Setup tabs handle their own empty states, so
+    // they work before any CSV pair has been imported.
     if (state.tab === "tsh") { app.appendChild(buildTshirtView()); return; }
     if (state.tab === "reports") { app.appendChild(buildReportsView()); return; }
+    if (state.tab === "setup") { app.appendChild(buildSetupView()); return; }
 
     if (!state.result) {
       app.appendChild(el("div", { class: "empty-state" },
-        ["No registration data loaded yet — use the menu's Developer → Import Registrations to load the first CSV export."]));
+        ["No registration data loaded yet — use the Setup tab → Import Registrations to load the first CSV export."]));
       return;
     }
     if (!state.result.ok) {
@@ -313,7 +323,7 @@
       return t;
     };
     return el("div", { class: "tabs no-print" },
-      [mk("sum", "Summary"), mk("reg", "Registration"), mk("tsh", "T-Shirts"), mk("reports", "Reports")]);
+      [mk("sum", "Summary"), mk("reg", "Registration"), mk("tsh", "T-Shirts"), mk("reports", "Reports"), mk("setup", "Setup")]);
   }
 
   // ---------- Events picker (the landing screen, shown before the tabs) ----------
@@ -1608,8 +1618,11 @@
     showBtn.addEventListener("click", printCarShowReport);
     var tshirtBtn = el("button", { class: "btn" }, ["👕 T-Shirt Report"]);
     tshirtBtn.addEventListener("click", printTshirtReport);
+    var flyerBtn = el("button", { class: "btn" }, ["🖼️ Print Flyer"]);
+    if (!state.flyer || !state.flyer.exists) flyerBtn.setAttribute("disabled", "disabled");
+    flyerBtn.addEventListener("click", printFlyer);
     var buttonCol = el("div", { class: "settings-actions", style: "flex-direction: column; align-items: flex-start" },
-      [summaryBtn, regBtn, showBtn, tshirtBtn]);
+      [summaryBtn, regBtn, showBtn, tshirtBtn, flyerBtn]);
     var row = el("div", { class: "reports-row" }, []);
     if (window.__vettefestReportsBanner) {
       row.appendChild(el("img", { src: window.__vettefestReportsBanner, class: "reports-banner", alt: "Reports" }));
@@ -1618,6 +1631,100 @@
     return el("div", { class: "view reports-view" }, [
       el("div", { class: "panel" }, [el("h3", { text: "Reports" }), row])
     ]);
+  }
+
+  // ---------- Setup tab ----------
+  // The two "load data into this event" actions, gathered in one place:
+  //   - Import Registrations — the ClubExpress CSV pair (opens the existing
+  //     registrations-import.php upload form in a new tab; it was previously
+  //     buried in the Developer menu).
+  //   - Import Flyer — the event's marketing flyer (image or PDF), uploaded
+  //     straight to flyer.php here and then printable from the Reports tab.
+  // Both server endpoints are session-gated (you're already logged in to see
+  // this), so the tab itself carries no extra password.
+  function buildSetupView() {
+    var wrap = el("div", { class: "view setup-view" });
+
+    // --- Import Registrations ---
+    var regPanel = el("div", { class: "panel" }, [el("h3", { text: "Import Registrations" })]);
+    regPanel.appendChild(el("div", { class: "hint", style: "margin-bottom:10px" },
+      ["Loads a fresh Registration Data / Activity Registrant Data CSV pair exported from ClubExpress. " +
+       "Opens the upload form in a new tab; come back and reload the app to see the new data."]));
+    if (state.result && state.result.meta) {
+      regPanel.appendChild(el("div", { class: "hint", style: "margin-bottom:10px" },
+        ["Current data loaded: " + fmtDate(state.result.meta.generatedAt) + "."]));
+    } else {
+      regPanel.appendChild(el("div", { class: "hint", style: "margin-bottom:10px" },
+        ["No registration data has been imported for this event yet."]));
+    }
+    var importRegsBtn = el("a", { class: "btn primary", href: "registrations-import.php", target: "_blank", rel: "noopener" },
+      ["📋 Import Registrations"]);
+    regPanel.appendChild(el("div", { class: "settings-actions" }, [importRegsBtn]));
+    wrap.appendChild(regPanel);
+
+    // --- Import Flyer ---
+    var flyerPanel = el("div", { class: "panel" }, [el("h3", { text: "Import Flyer" })]);
+    flyerPanel.appendChild(el("div", { class: "hint", style: "margin-bottom:10px" },
+      ["Upload the event flyer (JPG, PNG, GIF, WebP or PDF, up to 12 MB). Once uploaded it can be printed " +
+       "from the Reports tab."]));
+
+    if (state.flyer && state.flyer.exists) {
+      var current = el("div", { class: "hint", style: "margin-bottom:10px" }, [
+        "Current flyer: " + (state.flyer.name || "flyer") +
+        (state.flyer.uploadedAt ? " — uploaded " + fmtDate(state.flyer.uploadedAt) : "") + ". ",
+        el("a", { href: SITE_CONFIG.flyerApiUrl || "#", target: "_blank", rel: "noopener" }, ["View current flyer"])
+      ]);
+      flyerPanel.appendChild(current);
+    } else {
+      flyerPanel.appendChild(el("div", { class: "hint", style: "margin-bottom:10px" },
+        ["No flyer has been uploaded for this event yet."]));
+    }
+
+    var fileInput = el("input", { type: "file", accept: "image/jpeg,image/png,image/gif,image/webp,application/pdf" });
+    var uploadBtn = el("button", { class: "btn primary" }, [state.flyerUploading ? "Uploading…" : "⬆ Upload Flyer"]);
+    if (state.flyerUploading) uploadBtn.setAttribute("disabled", "disabled");
+    uploadBtn.addEventListener("click", function () {
+      var f = fileInput.files && fileInput.files[0];
+      if (!f) { state.flyerError = "Choose a file first."; renderViews(); return; }
+      uploadFlyer(f);
+    });
+    flyerPanel.appendChild(el("div", { class: "form-row" }, [fileInput]));
+    flyerPanel.appendChild(el("div", { class: "settings-actions" }, [uploadBtn]));
+    if (state.flyerError) {
+      flyerPanel.appendChild(el("div", { class: "form-error", text: state.flyerError }));
+    }
+    wrap.appendChild(flyerPanel);
+
+    return wrap;
+  }
+
+  // POSTs the chosen flyer file to flyer.php (multipart) for the open event,
+  // then updates state.flyer from the response so the Setup tab's "current
+  // flyer" line and the Reports tab's Print Flyer button both reflect it
+  // without a page reload.
+  function uploadFlyer(file) {
+    if (!SITE_CONFIG.flyerApiUrl) { state.flyerError = "Flyer upload isn't available here."; renderViews(); return; }
+    state.flyerUploading = true;
+    state.flyerError = null;
+    renderViews();
+    var fd = new FormData();
+    fd.append("flyer", file);
+    fetch(SITE_CONFIG.flyerApiUrl, { method: "POST", body: fd })
+      .then(function (res) { return res.json().then(function (d) { return { ok: res.ok, data: d }; }); })
+      .then(function (r) {
+        state.flyerUploading = false;
+        if (r.ok && r.data && r.data.success) {
+          state.flyer = { exists: true, mime: r.data.flyer.mime, name: r.data.flyer.name, uploadedAt: r.data.flyer.uploadedAt };
+        } else {
+          state.flyerError = (r.data && r.data.error) || "Upload failed — please try again.";
+        }
+        renderViews();
+      })
+      .catch(function () {
+        state.flyerUploading = false;
+        state.flyerError = "Upload failed — check your connection and try again.";
+        renderViews();
+      });
   }
 
   // Reuses buildSummaryView() verbatim (the same panels the Summary tab
@@ -1701,6 +1808,17 @@
     host.appendChild(el("table", { class: "grid report-table" }, [thead, tbody]));
     host.appendChild(buildPrintFooter());
     window.print();
+  }
+
+  // The event flyer uploaded on the Setup tab. Unlike the four data reports
+  // above (which build an HTML table into #printHost and call window.print()),
+  // a flyer is a single full-bleed graphic of arbitrary size/orientation and
+  // may be a PDF — so this just opens the stored file in a new tab, where the
+  // browser's own image/PDF viewer handles the actual print or save. Guarded
+  // the same way the button's disabled state is, in case it's called anyway.
+  function printFlyer() {
+    if (!state.flyer || !state.flyer.exists || !SITE_CONFIG.flyerApiUrl) return;
+    window.open(SITE_CONFIG.flyerApiUrl, "_blank", "noopener");
   }
 
   // ---------- dates ----------
@@ -1815,7 +1933,7 @@
     if (logoImg) kids.push(logoImg);
     kids.push(el("h1", { class: "dev-login-title", text: "Developer Login" }));
     kids.push(el("p", { class: "dev-login-subtitle" },
-      ["Unlocks Import Registrations, Settings, Regression Tests and the Change Log — " +
+      ["Unlocks Settings, Regression Tests and the Change Log — " +
        "a separate password from the main site login."]));
     kids.push(pwInput);
     if (state.developerError) kids.push(el("div", { class: "dev-login-error" }, [state.developerError]));
@@ -1831,15 +1949,16 @@
 
   function buildDeveloperMenuItems() {
     if (state.developerUnlocked) {
-      var importRegs = el("a", { class: "hdr-menu-item", href: "registrations-import.php", target: "_blank", rel: "noopener" }, ["📋 Import Registrations"]);
-      importRegs.addEventListener("click", closeMenu);
+      // Import Registrations used to live here; it moved to the Setup tab
+      // (which needs no Developer password — the upload endpoint is
+      // session-gated like everything else).
       var settings = el("button", { class: "hdr-menu-item" }, ["⚙ Settings"]);
       settings.addEventListener("click", function (e) { e.stopPropagation(); closeMenu(); openSettings(); });
       var regTests = el("button", { class: "hdr-menu-item" }, ["🧪 Run Regression Tests"]);
       regTests.addEventListener("click", function (e) { e.stopPropagation(); closeMenu(); openTestsPage(); });
       var changelog = el("button", { class: "hdr-menu-item" }, ["📋 Change Log"]);
       changelog.addEventListener("click", function (e) { e.stopPropagation(); closeMenu(); openChangelog(); });
-      return [importRegs, settings, regTests, changelog];
+      return [settings, regTests, changelog];
     }
     var devBtn = el("button", { class: "hdr-menu-item" }, ["🛠 Developer"]);
     devBtn.addEventListener("click", function (e) { e.stopPropagation(); closeMenu(); openDeveloperLogin(); });
@@ -2297,6 +2416,14 @@
       if (settings && typeof settings === "object") {
         Object.keys(settings).forEach(function (k) { state.appSettings[k] = settings[k]; });
       }
+    },
+    // Called by index.php's boot script with the open event's flyer METADATA
+    // ({ exists, mime, name, uploadedAt }) — never the bytes. Absent/ignored
+    // when no event is open.
+    ingestFlyer: function (meta) {
+      state.flyer = (meta && typeof meta === "object" && meta.exists)
+        ? { exists: true, mime: meta.mime, name: meta.name, uploadedAt: meta.uploadedAt }
+        : { exists: false };
     },
     // Called BEFORE ingestRows(), with the set of csvRegKey()s previously
     // deleted — so regenerate() can exclude them the moment the CSV is

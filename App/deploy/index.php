@@ -118,7 +118,8 @@ $perShowUrls = [
     'appSettingsApiUrl' => 'app-settings.php',
     'deletedRegistrationsApiUrl' => 'deleted-registrations.php',
     'registrationOverridesApiUrl' => 'registration-overrides.php',
-    'sendTshirtOrderEmailApiUrl' => 'send-tshirt-order-email.php'
+    'sendTshirtOrderEmailApiUrl' => 'send-tshirt-order-email.php',
+    'flyerApiUrl' => 'flyer.php'
 ];
 $siteConfig = [];
 foreach ($perShowUrls as $key => $file) {
@@ -147,6 +148,18 @@ if ($year !== null) {
     // app-settings.php and send-tshirt-order-email.php read.
     $bootParts[] = "    window.__vettefest.ingestAppSettings(" .
         vettefest_safe_inline_json(vettefest_read_settings($year)) . ");\n";
+
+    // Event flyer METADATA only (mime/name/uploadedAt) — never the base64
+    // bytes, which can be several MB. The Setup tab shows the "current flyer"
+    // state from this; the Reports tab's Print Flyer fetches the actual file
+    // from flyer.php on demand.
+    $flyerFile = vettefest_show_file($year, 'flyer.json');
+    $flyerRaw = ($flyerFile !== null && is_file($flyerFile)) ? json_decode(file_get_contents($flyerFile), true) : null;
+    $flyerMeta = (is_array($flyerRaw) && !empty($flyerRaw['dataB64']))
+        ? ['exists' => true, 'mime' => $flyerRaw['mime'] ?? 'application/octet-stream',
+           'name' => $flyerRaw['name'] ?? 'flyer', 'uploadedAt' => $flyerRaw['uploadedAt'] ?? null]
+        : ['exists' => false];
+    $bootParts[] = "    window.__vettefest.ingestFlyer(" . vettefest_safe_inline_json($flyerMeta) . ");\n";
 
     // MUST run before the ingestRows() call below — regenerate() (triggered
     // by ingestRows) excludes deleted keys from the freshly-parsed CSV the
