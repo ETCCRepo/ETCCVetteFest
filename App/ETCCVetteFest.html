@@ -430,7 +430,7 @@ a.show-open:hover { text-decoration: underline; }
   <div id="app"></div>
 </div>
 <footer class="app-footer">
-  <div>v2.8 &middot; Deployed 09/10/2026 05:59 AM</div>
+  <div>v2.10 &middot; Deployed 09/11/2026 06:57 PM</div>
   <div class="footer-credit">Website by Business Web Express &middot; <a href="mailto:info@businesswebexpress.com">info@businesswebexpress.com</a></div>
   <div class="footer-credit">&copy; 2026 East Tennessee Corvette Club &middot; Knoxville, TN &middot; <a href="mailto:etccwebsite.webmanager@gmail.com">etccwebsite.webmanager@gmail.com</a></div>
 </footer>
@@ -1616,6 +1616,7 @@ window.__vettefestReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQ
     showsError: null,     // last shows.php failure, shown on the picker
     showsBusy: false,     // a shows.php call is in flight
     showPendingDelete: null, // event awaiting delete confirmation, or null
+    importInstructionsOpen: false, // Setup tab's "how do I get these files from ClubExpress" modal
 
     tab: "sum",
     detailRow: null,  // registration row currently shown in the detail modal, or null
@@ -2139,6 +2140,46 @@ window.__vettefestReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQ
     backdrop.addEventListener("click", cancelDeleteShow);
     host.appendChild(backdrop);
     pw.focus();
+  }
+
+  // The exact steps registrations-import.php's own "?" button shows —
+  // duplicated there in plain HTML/CSS (no shared JS module between a static
+  // PHP page and this bundle) rather than referenced, so both must be edited
+  // together if ClubExpress ever changes this flow.
+  function openImportInstructions() { state.importInstructionsOpen = true; renderImportInstructions(); }
+  function closeImportInstructions() { state.importInstructionsOpen = false; renderImportInstructions(); }
+  function renderImportInstructions() {
+    var host = $("#confirmHost");
+    if (!host) return;
+    host.innerHTML = "";
+    if (!state.importInstructionsOpen) return;
+
+    var closeBtn = el("button", { class: "btn" }, ["✕"]);
+    closeBtn.addEventListener("click", closeImportInstructions);
+    var head = el("div", { class: "modal-head" }, [
+      el("h3", { text: "Getting the two files from ClubExpress" }),
+      el("span", { class: "spacer" }),
+      closeBtn
+    ]);
+
+    var steps = [
+      "Select the Event", "Admin Options", "Exports", "Registration Data", "Export",
+      "Save as registration_data.csv", "Exports", "Activity Registrant Data", "Export",
+      "Save as activity_registrant_data.csv"
+    ];
+    var body = el("div", { class: "modal-body" }, [
+      el("p", {}, ["Do this twice — once for each export below — then upload both files on the Import Registrations screen."]),
+      el("ol", { style: "margin:0; padding-left:22px; line-height:1.7" }, steps.map(function (s) { return el("li", { text: s }); })),
+      el("div", { class: "settings-actions", style: "margin-top:14px" }, [
+        (function () { var b = el("button", { class: "btn primary" }, ["Got it"]); b.addEventListener("click", closeImportInstructions); return b; })()
+      ])
+    ]);
+
+    var modal = el("div", { class: "modal" }, [head, body]);
+    modal.addEventListener("click", function (e) { e.stopPropagation(); });
+    var backdrop = el("div", { class: "modal-backdrop" }, [modal]);
+    backdrop.addEventListener("click", closeImportInstructions);
+    host.appendChild(backdrop);
   }
 
   // CSVs are (re)ingested synchronously right before regenerate() runs, so
@@ -3241,7 +3282,9 @@ window.__vettefestReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQ
     }
     var importRegsBtn = el("a", { class: "btn primary", href: "registrations-import.php", target: "_blank", rel: "noopener" },
       ["📋 Import Registrations"]);
-    regPanel.appendChild(el("div", { class: "settings-actions" }, [importRegsBtn]));
+    var instructionsBtn = el("button", { class: "btn", title: "How to get these files from ClubExpress" }, ["❓ Instructions"]);
+    instructionsBtn.addEventListener("click", openImportInstructions);
+    regPanel.appendChild(el("div", { class: "settings-actions" }, [importRegsBtn, instructionsBtn]));
     wrap.appendChild(regPanel);
 
     // --- Import Flyer ---
@@ -3952,6 +3995,7 @@ window.__vettefestReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQ
       if (state.changelogOpen) { closeChangelog(); return; }
       if (state.tshirtOrderPageOpen) { closeTshirtOrderPage(); return; }
       if (state.showPendingDelete) { cancelDeleteShow(); return; }
+      if (state.importInstructionsOpen) { closeImportInstructions(); return; }
       if (state.deleteRegSelectedOpen) { closeDeleteRegSelectedConfirm(); return; }
       if (state.menuOpen) { closeMenu(); return; }
       if (state.detailRow) closeDetail();

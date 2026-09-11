@@ -110,11 +110,38 @@ $current = is_file($REG_FILE) ? json_decode(file_get_contents($REG_FILE), true) 
   .success { background:#f2fbf5; border:1px solid #bfe2c9; border-radius:8px; padding:12px 14px; margin-bottom:14px; color: var(--good); font-weight:600; font-size:14px; }
   .count { color: var(--muted); font-size:13px; margin-bottom: 14px; }
   .back { display:block; text-align:center; margin-top:18px; color: var(--muted); font-size:13px; }
+  .title-row { display:flex; align-items:center; justify-content:center; gap:8px; margin-bottom:2px; }
+  .title-row h1 { margin:0; }
+  .instructions-btn {
+    background:#fff; border:1px solid var(--line); color: var(--muted); width:24px; height:24px;
+    border-radius:50%; font-size:13px; font-weight:700; line-height:1; cursor:pointer; padding:0;
+    display:inline-flex; align-items:center; justify-content:center; flex:none;
+  }
+  .instructions-btn:hover { background:#f4f6f8; color: var(--ink); }
+  .modal-backdrop {
+    display:none; position:fixed; inset:0; background:rgba(20,20,20,.45); z-index:50;
+    align-items:center; justify-content:center; padding:20px;
+  }
+  .modal-backdrop.open { display:flex; }
+  .modal {
+    background:#fff; border-radius:12px; max-width:440px; width:100%; padding:24px 26px;
+    box-shadow:0 12px 40px rgba(0,0,0,.25); max-height:85vh; overflow-y:auto;
+  }
+  .modal h2 { font-size:17px; margin:0 0 4px; }
+  .modal .modal-sub { color: var(--muted); font-size:13px; margin:0 0 16px; }
+  .modal ol { margin:0; padding-left:22px; font-size:14px; line-height:1.7; }
+  .modal ol li { margin-bottom:2px; }
+  .modal .filename { font-family: ui-monospace, Consolas, monospace; background:#f4f6f8; padding:1px 6px; border-radius:4px; font-size:13px; }
+  .modal-close { background: var(--red); border:1px solid var(--red-dark); color:#fff; padding:9px 16px; border-radius:8px; font-size:14px; font-weight:700; cursor:pointer; width:100%; margin-top:18px; }
+  .modal-close:hover { background: var(--red-dark); }
 </style>
 </head>
 <body>
 <div class="wrap">
-  <h1>Import Registrations</h1>
+  <div class="title-row">
+    <h1>Import Registrations</h1>
+    <button type="button" class="instructions-btn" title="How to get these files from ClubExpress" onclick="document.getElementById('instructionsModal').classList.add('open')">?</button>
+  </div>
   <div class="sub">Loads a fresh Registration Data / Activity Registrant Data CSV pair from ClubExpress</div>
   <div class="panel">
     <?php if ($imported !== null): ?>
@@ -142,6 +169,26 @@ $current = is_file($REG_FILE) ? json_decode(file_get_contents($REG_FILE), true) 
     </form>
   </div>
   <a class="back" href="index.php">&larr; Back to the app</a>
+</div>
+
+<div class="modal-backdrop" id="instructionsModal" onclick="if(event.target===this) this.classList.remove('open')">
+  <div class="modal">
+    <h2>Getting the two files from ClubExpress</h2>
+    <p class="modal-sub">Do this twice — once for each export below — then upload both files here.</p>
+    <ol>
+      <li>Select the Event</li>
+      <li>Admin Options</li>
+      <li>Exports</li>
+      <li>Registration Data</li>
+      <li>Export</li>
+      <li>Save as <span class="filename">registration_data.csv</span></li>
+      <li>Exports</li>
+      <li>Activity Registrant Data</li>
+      <li>Export</li>
+      <li>Save as <span class="filename">activity_registrant_data.csv</span></li>
+    </ol>
+    <button type="button" class="modal-close" onclick="document.getElementById('instructionsModal').classList.remove('open')">Got it</button>
+  </div>
 </div>
 </body>
 </html>
