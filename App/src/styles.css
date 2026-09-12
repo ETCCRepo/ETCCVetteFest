@@ -217,6 +217,13 @@ th.pinned { z-index: 3; }
   display: flex; align-items: center; gap: 8px; padding: 14px 18px; border-bottom: 1px solid var(--line);
   position: sticky; top: 0; background: #fff; border-radius: 12px 12px 0 0;
 }
+/* Registration detail modal: header + action bar pinned together. The inner
+   .modal-head drops its own stickiness so the two scroll as one block. */
+.modal-pinned { position: sticky; top: 0; z-index: 2; background: #fff; border-radius: 12px 12px 0 0; }
+.modal-pinned .modal-head { position: static; }
+.detail-actions { padding: 0 18px; border-bottom: 1px solid var(--line); background: #fff; }
+.detail-actions .settings-actions { margin: 8px 0; gap: 8px; }
+.detail-actions .form-error { margin: -4px 0 8px; }
 .modal-head h3 { margin: 0; font-size: 17px; flex: 1; }
 .modal-head .btn { padding: 5px 10px; font-size: 12px; }
 .modal-body { padding: 4px 18px 20px; }

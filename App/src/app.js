@@ -1270,10 +1270,15 @@
     var delBtn = el("button", { class: "btn", style: "color:var(--warn)" }, ["Delete"]);
     delBtn.addEventListener("click", deleteDetailRow);
     actions.push(delBtn);
-    body.appendChild(el("div", { class: "settings-actions" }, actions));
-    if (state.detailEditError) body.appendChild(el("div", { class: "form-error" }, [state.detailEditError]));
+    // Actions live directly under the header and scroll-pin with it, so Save /
+    // Revert / Delete stay reachable on a long record without scrolling to the
+    // bottom. The error sits in the same pinned block, next to the buttons that
+    // cause it.
+    var actionBar = el("div", { class: "detail-actions" }, [el("div", { class: "settings-actions" }, actions)]);
+    if (state.detailEditError) actionBar.appendChild(el("div", { class: "form-error" }, [state.detailEditError]));
+    var pinned = el("div", { class: "modal-pinned" }, [head, actionBar]);
 
-    var modal = el("div", { class: "modal" }, [head, body]);
+    var modal = el("div", { class: "modal" }, [pinned, body]);
     modal.addEventListener("click", function (e) { e.stopPropagation(); });
     var backdrop = el("div", { class: "modal-backdrop" }, [modal]);
     backdrop.addEventListener("click", closeDetail);
