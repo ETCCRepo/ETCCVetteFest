@@ -1,6 +1,23 @@
 # ETCC Vette Fest App — Project Status
 
-Last updated: 2026-09-10 (end of session). **Added a "Setup" tab** (after Reports) that
+Last updated: 2026-09-12 (end of session). **Setup and History were brought to full
+CarShow parity and the ClubExpress import loop was automated end to end** — an Import
+Schedule panel on Setup, a `vettefest-sync-registrations` Windows scheduled task polling
+it every 15 minutes, hourly auto-import enabled on the live 2026 event, and a History tab
+that logs every import (success or failure). Two CarShow bug fixes were also ported (the
+Registration table under-filling the viewport; tabs not re-pulling server data on
+selection). Shipped across **v2.11 → v2.23**, nine commits, all built, deployed and
+pushed. See "This session's work (2026-09-12)" and "(2026-09-11)" below.
+
+> **How those two entries were written — read this before trusting their detail.** The
+> 09-11 and 09-12 sessions both ended without running `/ETCCVetteFestEnd`, so this file sat
+> at v2.8 while the app moved to v2.23. Both entries were reconstructed on 2026-09-12 from
+> git history (`0cb6398..ba448cb`) and the working tree, **not** from conversation memory.
+> The commit messages in that range are unusually detailed and are the primary source, but
+> anything not recorded there — dead ends, options weighed and rejected, verbal decisions
+> — is lost. Where this summary and the code/commits disagree, the code wins.
+
+Previous update: 2026-09-10 (end of session). **Added a "Setup" tab** (after Reports) that
 holds Import Registrations (moved out of the Developer menu) and a brand-new **Import
 Flyer** feature, plus a **Print Flyer** button on the Reports tab and a new
 `App/deploy/flyer.php` endpoint. Two checkpoints shipped, **v2.7** (feature) then **v2.8**
@@ -40,18 +57,23 @@ list of deliberate differences — unisex shirts in 12 buckets not 24, four pric
 admissions that drive both Reg Type and attendee count, a `26-01`-style per-event Reg #,
 no sponsorship concept at all).
 
-**Regression suite: 85/85 passing**, re-run explicitly on 2026-09-10 after the Setup-tab
-work (covering fixture-based generation — registrations, attendees, funds, judges, shirt
+**Regression suite: 85/85 passing**, last re-run on 2026-09-12 after the CarShow-parity
+port (covering fixture-based generation — registrations, attendees, funds, judges, shirt
 buckets, generation tally, Reg #, event-title fallback chain, show-year validation — and
 an Excel export round-trip). The suite is logic-only (`test/run-tests.js` +
-`src/regression-tests.js`) and does not exercise any UI/tab code, so the Setup tab / flyer
-feature was instead verified by hand against the live 2026 event (see the session entry
-below).
+`src/regression-tests.js`) and does not exercise any UI/tab code. **That gap is now large:**
+none of the Setup tab, Import Schedule, History tab, flyer or scheduled-task work has any
+automated coverage — all of it was verified by hand against the live 2026 event instead
+(see the session entries below). The count stays at 85 because none of that work touched
+`logic.js`.
 
-**Version:** `App/version.json` — stamped **2.8** in the currently-live
-`App/ETCCVetteFest.html` / `app-bundle.html` on the server (deployed 2026-09-10). The file
-itself now reads `{major:2, minor:9}`, since `build.js` bumps-and-stores the *next*
-version on every run — the next build will stamp "2.9".
+**Version:** `App/version.json` — stamped **2.23** in the currently-live
+`App/ETCCVetteFest.html` / `app-bundle.html` on the server (built and deployed 2026-09-12
+13:05, commit `ba448cb`). The file itself now reads `{major:2, minor:24}`, since
+`build.js` bumps-and-stores the *next* version on every run — the next build will stamp
+"2.24". **Gaps in the version sequence are normal, not lost work:** `build.js` bumps on
+*every* run, including rebuilds that were never committed or deployed, which is why the
+shipped history reads 2.11, 2.12, 2.13, 2.15, 2.17, 2.18, 2.20, 2.22, 2.23.
 
 **Live URL:** https://etccapps.com/apps/vettefest/ — as of 2026-09-09, **the Developer
 password is the same as the site password** (`$DEV_PASSWORD_HASH` in `secrets.php` was set
@@ -59,9 +81,15 @@ to the same hash as `$PASSWORD_HASH`, at the user's request). Neither password i
 in this file; check with the user or `App/deploy/secrets.php` on a machine that has it.
 
 ### Front end (`App/src/`)
-- `app.js` — the SPA (~109KB), `logic.js` — pure business logic (~17.5KB, mirrors
-  `lib.php`'s server-side validation rules), `config.js` — the single place to adapt the
-  tool to a different event, `excel.js` — export, `styles.css`, `regression-tests.js`.
+- `app.js` — the SPA (~145KB; it was ~109KB before the 09-11/09-12 Setup/History work),
+  `logic.js` — pure business logic (~17KB, mirrors `lib.php`'s server-side validation
+  rules), `config.js` — the single place to adapt the tool to a different event,
+  `excel.js` — export, `styles.css` (~27KB), `regression-tests.js`.
+- **Six tabs, in this order: Summary, Registration, T-Shirts, Reports, Setup, History**
+  (`buildTabs()`). As of 2026-09-12 selecting *any* tab calls `refreshShowData()` so the
+  event's server data is re-pulled on every tab click; Setup additionally calls
+  `loadRunStatus()` for the persisted "Last run" line, which is not part of the general
+  data refresh.
 - `build.js` inlines `vendor/` + `src/` + fixture CSVs into a self-contained
   `App/ETCCVetteFest.html`, bumping `version.json`'s minor number on each build.
 
@@ -78,27 +106,198 @@ password), `logout.php`, `.htaccess`, `secrets.example.php`, `ftp-deploy.sh`,
 store (`POST` uploads an image/PDF, `GET` serves it, `GET ?meta=1` returns metadata),
 backing the Setup tab's Import Flyer and the Reports tab's Print Flyer.
 
+Four more endpoints were added 2026-09-11/12, all ported from CarShow:
+- **`import-history.php`** — refresh + delete rows of the per-event import log.
+- **`import-schedule.php`** — the bridge between the app and the Windows scheduled task.
+  Five actions: `request` (Setup's "Import Now" writes a pending request), `check` (the
+  task polls this; answers "is an import due?" from either a pending request or the
+  auto-import schedule), `mark_start`, `mark_run`, and `run_status` (what Setup's "Last
+  run" line reads). The app never invokes the task; the task always pulls.
+- **`logs.php`** — a 7-day server-side archive of per-run import logs (store/list/get),
+  so a failed run leaves something readable behind.
+- **`refresh.php`** — returns the same payload `index.php`'s boot script emits, so any
+  tab can re-pull live event data without a page reload. Both call the single shared
+  `vettefest_boot_data($year)` in `lib.php`, deliberately, so the boot path and the
+  refresh path cannot drift apart.
+
 `ftp-deploy.sh` uploads an **explicit hand-maintained list** of files (not a `*.php`
 glob) — a new deploy/*.php file MUST be added to that list or it silently never ships
-(this bit the flyer.php work mid-session: the first deploy ran clean but flyer.php wasn't
-on the server until it was added to the script).
+(this bit the flyer.php work on 2026-09-10: the first deploy ran clean but flyer.php
+wasn't on the server until it was added to the script). All four endpoints added since
+then — `refresh.php`, `import-schedule.php`, `import-history.php`, `logs.php` — **are**
+on the list; verified 2026-09-12.
 
-Data model: one JSON dataset per event year under `data/<year>/` on the server
-(registrations, deleted-registrations, overrides, settings, **and as of 2026-09-10 the
-flyer** — `flyer.json`, the flyer bytes stored base64 inside it so it sits under the same
-`*.json` deny rule), plus a global `data/shows.json` registry — never a flat single-event
-layout, so there's no migration step needed for a fresh install. The per-event file list
-lives in `vettefest_show_files()` in `lib.php`.
+Data model: one JSON dataset per event year under `data/<year>/` on the server, plus a
+global `data/shows.json` registry — never a flat single-event layout, so there's no
+migration step needed for a fresh install. The per-event file list lives in
+`vettefest_show_files()` in `lib.php`, and is now nine files:
+`registrations-data.json`, `deleted-registrations.json`, `registration-overrides.json`,
+`app-settings.json`, `flyer.json` (the flyer bytes stored base64 inside it so it sits
+under the same `*.json` deny rule), and — added 2026-09-11/12 — `import-history.json`,
+`import-request.json`, `import-schedule-state.json`, `import-run-status.json`.
+**Anything new that is written per-event has to be added to that function**, or it will be
+missed by the event delete/archive paths that enumerate it.
 
 **Deployed** — `App/deploy/secrets.php` and `App/deploy/.ftp-credentials` both exist on
 disk (gitignored, never committed), the `vettefest` FTP account exists, and
 `App/deploy/ftp-deploy.sh` has successfully uploaded code multiple times. The first live
-event (2026) already has 70 real registrations imported and has been used to verify the
-filter fixes below against real data.
+event (2026) is the only one in use; as of the last verified scheduled import on
+2026-09-12 it held **74 registration rows and 108 activity rows** of real ClubExpress
+data (it was 70 registrations back on 2026-08-24). That live event is what the hand
+verification described in the session entries below was run against — there is no staging
+copy.
 
 **Git: pushed and working**, as of 2026-08-27 — see that session's entry below for the
 one gotcha (a global credential helper that must be worked around on every push from this
 machine).
+
+## This session's work (2026-09-12)
+
+**Theme: close the loop on imports.** The Setup and History tabs were finished to CarShow
+parity, a real Windows scheduled task was stood up to drive them, and hourly auto-import
+was switched on for the live 2026 event. Seven commits, `7124453` → `ba448cb`, v2.13
+through v2.23, all deployed and pushed.
+
+### 1. Setup + History brought to CarShow parity (`7124453`, v2.13)
+
+**Setup tab** gained the full **Import Schedule** section CarShow has:
+- **ClubExpress Event URL** field — the import skill now reads the event URL *from the
+  app* instead of carrying a hardcoded URL that goes stale every year. That is the whole
+  point of the field; don't reintroduce a hardcoded URL in the skill.
+- **Import Now** — writes a pending request that the scheduled task picks up on its next
+  poll. The app cannot invoke the task directly (see §3).
+- **Auto-import schedule** — `autoImportEnabled`, `autoImportTimes` (explicit `HH:MM`
+  times, 24-hour, America/New_York), `autoImportIntervalHours`, `autoImportStartDate`,
+  `autoImportEndDate`. Note the two scheduling styles are **unioned, not folded together**:
+  an interval and a list of explicit times both fire. Defaults live in `app.js` (~line 111)
+  and are documented in `app-settings.php`'s header comment.
+- Archived per-run logs, and (at this point) the by-hand CSV upload moved into a "Manual"
+  subsection — which was removed again hours later, see §2.
+
+**History tab** gained row checkboxes with Delete Selected / Delete All, a success/failure
+icon, a per-run log link, and Source + Event URL columns — so a *failed* scheduled run
+leaves a visible trace instead of nothing at all.
+
+**New endpoints** (all now in `ftp-deploy.sh`'s upload list): `import-schedule.php`,
+`logs.php`, `import-history.php`. `upload-registrations.js` gained
+`VETTEFEST_EVENT_URL` / `VETTEFEST_LOG_FILE` passthrough.
+
+**Trap worth knowing:** history entries written *before* this port used the key
+`importedAt`; the port writes a different key. Both the view and the delete endpoint read
+**either** key, so pre-v2.13 rows still render and still delete. Don't "clean up" that dual
+read — those old rows are still on the live server.
+
+Verified live on the 2026 event: settings round-trip, the full
+`request`/`check`/`mark_start`/`mark_run`/`run_status` handshake, logs store/list/get, and
+both tabs rendering including a legacy-shape history row. 85/85 tests. Deployed separately
+in `239fcfb` (v2.15) — the parity work had landed in git but hadn't shipped yet.
+
+### 2. Two UI fixes (`bafe6e2`, v2.17)
+
+- **Manual upload section removed from Setup**, at the user's request — Import Now covers
+  that case and `registrations-import.php` is still reachable directly if anyone bookmarked
+  it. This **reverses** part of §1 from the same day, so the Manual subsection that commit
+  describes no longer exists. Deleted the now-dead `buildSetupLauncher()`,
+  `openImportInstructions()`, `renderImportInstructions()` and their state, plus an
+  orphaned `.setup-item` CSS rule.
+- **History's Delete Selected / Delete All buttons had invisible text.** Two conflicting
+  `.btn-warn` rules existed — a solid red-background/white-text one, and an outline
+  red-text/white-background one carried over from the CarShow port. The more specific
+  `.btn.btn-warn` selector always won, giving red text on a red background. Removed the
+  solid variant; CarShow only ever had the outline one, so this is also true visual parity.
+
+### 3. The scheduled task (`7c6473d` v2.18, and `ba448cb` v2.23)
+
+Stood up **`vettefest-sync-registrations`**, a Claude Code scheduled task running **every
+15 minutes**, which polls `import-schedule.php?action=check` and runs the ClubExpress
+import when one is due. Set **`VETTEFEST_SITE_PASSWORD`** as a persistent Windows *user*
+environment variable so the task can authenticate.
+
+**All of this lives outside this git repo** — `~/.claude/scheduled-tasks/vettefest-sync-registrations/`,
+`~/.claude/skills/`, and Windows user env. There is nothing to commit here for it, and
+cloning this repo onto another machine does **not** bring the automation with it.
+
+Re-verified end to end after a machine reboot (`ba448cb`): `VETTEFEST_SITE_PASSWORD`
+correctly propagates into the task's process, and a real run pulled and uploaded live 2026
+data — **74 registration rows, 108 activity rows**. Completion notifications were enabled
+on the task itself.
+
+**The split that confuses people, and why it exists** (`d08f13e`, v2.22): the Setup tab now
+carries a **"Scheduled Task" row** stating in the UI that the *task's own* health — last
+poll time, success/failure — lives in Claude Code (Scheduled Tasks →
+`vettefest-sync-registrations` → Runs), **not** on this server. A hosted PHP page has no way
+to query a local Windows scheduled task. Building a status bridge would require the poller
+to write to the server on *every* no-op check, which fights its own "stay cheap" design — so
+the split was documented rather than papered over. If someone asks "why doesn't the app show
+whether the task is alive?", this is the answer.
+
+### 4. Two CarShow fixes ported (`59de1d7`, v2.20)
+
+Both were ported from the sibling app's fixes for the identical problems.
+
+**a. Registration table under-filled the viewport** on desktop and iPad. Root cause: `zoom`
+lived on `.tablewrap`, and **CSS `zoom` rescales the element's own lengths** — so
+`max-height: calc(100vh - 250px)` rendered at zoom *x* as *x* times that value, cutting the
+visible table to roughly 60% of the intended height at the auto-fit zoom a wide screen
+picks. Fix: move `zoom` to the inner `<table>` (`buildRegView`, `fitZoom`); `.tablewrap.fill`
+plus a `body:has(.tablewrap.fill)` flex-column shell in `styles.css` now hands the table
+exactly whatever viewport is left, with no device-specific guess. Browsers without `:has()`
+fall back to the old `calc()`. The History tab's own table is unaffected
+(`.history-view .tablewrap { max-height: none; }`). **`styles.css` carries an explicit
+"never put `zoom` on .tablewrap" comment at ~line 120 — leave it there.**
+
+**b. Only Setup and History re-pulled server data.** An import, or another officer's edit,
+that landed after the page opened was invisible on every other tab until a full reload. Now
+every tab calls `refreshShowData()` on selection. The new `vettefest_boot_data()` in
+`lib.php` is the single source of truth that both `index.php`'s boot script and the new
+`refresh.php` call — deliberately, so the two cannot drift apart. `refreshShowData()` in
+`app.js` replaced the old History-only `loadImportHistory()`.
+
+Regression suite 85/85 (neither change touches `logic.js`). Verified by hand: computed
+styles confirm `.tablewrap.fill` gets `flex: 1 1 auto` / `max-height: none` and `body`
+becomes a 100dvh flex column; an end-to-end check against a mocked `refresh.php` confirmed
+that clicking a non-Setup/History tab (Summary) pulls fresh `appSettings` / `importHistory`
+into state.
+
+### 5. Live config change, in no diff anywhere
+
+**Auto-import was enabled on the live 2026 event**: `autoImportIntervalHours = 1`, matching
+the sibling CarShow app's live schedule. `autoImportTimes` and the date range were
+deliberately left **unbounded** rather than copying CarShow's own event-specific date
+window. Applied directly through `app-settings.php` against the live server, so it exists
+only in `data/2026/app-settings.json` on the host — it is not in git, and a fresh install
+will not have it. See follow-up #7 for the consequence.
+
+## This session's work (2026-09-11)
+
+Two commits, both shipped: `0b0bd09` (v2.11) and `83355a2` (v2.12).
+
+### 1. ClubExpress export instructions (`0b0bd09`, v2.11)
+
+Officers had no in-app reference for how to produce the CSVs, so a **"?" instructions
+modal** was added in two places showing the same 10 steps (Select Event → Admin Options →
+Exports → Registration Data → Export → save `registration_data.csv`, then repeat for
+Activity Registrant Data): the Setup tab's Import Registrations panel (an in-app JS modal)
+and the standalone `registrations-import.php` upload page itself.
+
+**Superseded the next day:** the Setup-tab copy of this modal was deleted in `bafe6e2` along
+with the rest of the Manual subsection. The copy on `registrations-import.php` survives and
+is now the only one.
+
+### 2. History tab and the import log (`83355a2`, v2.12)
+
+Added a server-side import log at `data/<year>/import-history.json`, written by
+**`vettefest_record_import_history()`** in `lib.php` and appended on every successful save
+from **both** import paths — the browser upload form in `registrations-import.php` and
+`upload-registrations.js`'s CLI flow via `registrations-upload.php`. Each entry carries a
+timestamp plus registration and activity row counts. (The signature later grew `$source`,
+`$eventUrl` and `$logFile` parameters in the v2.13 port.)
+
+`index.php` reads the log fresh on every request, newest-first, and ingests it through a new
+`window.__vettefest.ingestImportHistory()` hook — the same pattern as the existing per-event
+data ingests. `app.js` gained the **History tab** (`buildHistoryView()`) rendering the log as
+a plain table, with its own empty state for an event that has never been imported. The
+richer table (checkboxes, status icons, log links, Source/Event URL) came the next day.
 
 ## This session's work (2026-09-10)
 
@@ -447,21 +646,47 @@ having the token; see that section and "Known follow-ups" for the exact command.
    nothing beyond literal HTML `placeholder=` attributes, and a full-tree grep for "Car
    Show" (2026-08-28, after fixing the four leftover-branding pages above) confirmed every
    remaining occurrence is a legitimate reference to the Car Show feature/tab within Vette
-   Fest itself, or to the sibling app by name — not stray copy-paste.
-3. Only the 2026 event has been exercised on the live site (70 real registrations
-   imported and used to verify the filter fixes in the 2026-08-24 entry below). No second
-   event/year has been created yet, so per-year data isolation (`vettefest_valid_year()`
-   etc.) is unverified against more than one year's worth of real data — this mirrors a
-   similar open item the CarShow app had after ITS multi-year work landed.
+   Fest itself, or to the sibling app by name — not stray copy-paste. Note that a lot of
+   code has landed since that scan (v2.11→v2.23) without it being re-run.
+3. Only the 2026 event has been exercised on the live site (74 registration rows / 108
+   activity rows of real ClubExpress data as of 2026-09-12). No second event/year has been
+   created yet, so per-year data isolation (`vettefest_valid_year()` etc.) is unverified
+   against more than one year's worth of real data — this mirrors a similar open item the
+   CarShow app had after ITS multi-year work landed.
 4. **Import Flyer has no "remove flyer" UI** — you can only overwrite it by uploading a
    different file. If an officer needs the flyer gone entirely, delete
    `data/<year>/flyer.json` over FTP (or add a `?delete` branch to `flyer.php` + a Remove
-   button on the Setup tab if it's asked for). Also: the flyer/Setup-tab code has **no
-   regression-suite coverage** (the suite is logic-only and doesn't touch tab/UI code) —
-   it was verified by hand against the live site.
+   button on the Setup tab if it's asked for).
 5. **A new `deploy/*.php` file will not ship unless it's added to the explicit upload
    list in `deploy/ftp-deploy.sh`** — that script uploads a hand-maintained list, not a
-   glob. (Bit the flyer.php work this session before it was noticed.)
+   glob. (Bit the flyer.php work on 2026-09-10 before it was noticed. The four endpoints
+   added since are all on the list — verified 2026-09-12.) Same applies to
+   `vettefest_show_files()` in `lib.php` for any new per-event JSON file.
+6. **The import automation is not in this repo.** `vettefest-sync-registrations` lives in
+   `~/.claude/scheduled-tasks/`, the import skill in `~/.claude/skills/`, and
+   `VETTEFEST_SITE_PASSWORD` is a persistent Windows *user* environment variable. A fresh
+   clone gets the app but none of the automation, and after a machine reboot it is worth
+   confirming the env var still reaches the task's process (that exact check is what
+   `ba448cb` recorded). The task's own health is visible only in Claude Code → Scheduled
+   Tasks → Runs, never in the app — by design, see the 2026-09-12 entry §3.
+7. **Auto-import on the 2026 event is enabled with no end date.** It runs hourly
+   (`autoImportIntervalHours = 1`) with `autoImportStartDate` / `autoImportEndDate` left
+   empty, so it will keep polling ClubExpress indefinitely after the event is over.
+   Someone should either set an end date or switch `autoImportEnabled` off once the 2026
+   event closes. This setting lives only in `data/2026/app-settings.json` on the server —
+   it is in no diff and no backup here.
+8. **No UI has automated coverage.** The regression suite is logic-only, so the Setup tab,
+   Import Schedule, History tab, flyer feature, and the whole scheduled-task handshake were
+   all verified by hand against the live 2026 event and nothing guards them against
+   regression. Any change in that area needs manual re-verification on the live site.
+9. **Legacy history rows use a different key.** Import-history entries written before v2.13
+   used `importedAt`; the view and the delete endpoint read either key on purpose. Don't
+   collapse that dual read — pre-v2.13 rows are still on the live server.
+10. **Run `/ETCCVetteFestEnd` before closing a session.** The 09-11 and 09-12 sessions did
+    not, which left this file stranded at v2.8 while the app shipped through v2.23; those
+    two entries had to be reconstructed from commit messages, and whatever wasn't committed
+    is gone. The commit messages in this repo are detailed enough to make that recovery
+    possible — keep writing them that way.
 
 ## Architecture notes worth preserving
 
