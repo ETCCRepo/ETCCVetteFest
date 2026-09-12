@@ -5,10 +5,21 @@
 //    Nothing is ever sent automatically — an officer still reviews and
 //    presses Send on that screen, and can override the recipient there.
 //  - tshirtOrderSubject: the default Subject for that same email.
+//  - eventUrl: the ClubExpress event Admin Panels URL for this event's year,
+//    read by the /ETCCVetteFestImportData skill (via import-schedule.php's
+//    'check') instead of a hardcoded URL that goes stale every year.
+//  - autoImportEnabled / autoImportTimes / autoImportIntervalHours /
+//    autoImportStartDate / autoImportEndDate: the Setup tab's auto-import
+//    schedule. autoImportTimes is a list of explicit "HH:MM" (24-hour,
+//    America/New_York) times to run an import each day; autoImportIntervalHours
+//    (0 = off) is a simpler "every N hours, on the hour" alternative that is
+//    unioned with — not folded into — autoImportTimes, so the two stay
+//    independently editable and can be used together.
 //
-// Both are per-event on purpose: the vendor and the wording legitimately
-// change from one year to the next, and a past year's record of what was
-// ordered from whom shouldn't be rewritten by this year's settings.
+// All are per-event on purpose: the vendor, the wording and the ClubExpress
+// event URL legitimately change from one year to the next, and a past year's
+// record of what was ordered from whom shouldn't be rewritten by this year's
+// settings.
 //
 // The defaults live in ONE place (lib.php's vettefest_settings_defaults())
 // rather than being repeated here, in index.php's boot script and in

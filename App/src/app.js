@@ -47,13 +47,38 @@
     flyerUploading: false,
     flyerError: null,
 
-    // The History tab's log — one entry per successful import ({ importedAt,
-    // regRows, actRows }), newest first. Filled by ingestImportHistory() from
-    // index.php's boot script; recorded server-side at import time (see
-    // vettefest_record_import_history() in lib.php), not client-side, so it
-    // stays accurate regardless of which import path (the browser form or
-    // upload-registrations.js) an officer used.
+    // The History tab's log — one entry per import ATTEMPT ({ timestamp,
+    // regRows, actRows, source, eventUrl, outcome, error, logFile }) in FILE
+    // order (oldest first); buildHistoryView() reverses it for display. Filled
+    // by ingestImportHistory() from index.php's boot script and refreshed by
+    // loadImportHistory() on each History-tab select. Recorded server-side at
+    // import time (see vettefest_record_import_history() in lib.php and
+    // import-schedule.php's mark_run for failures), not client-side, so it
+    // stays accurate regardless of which import path an officer used.
+    // Entries written before the CarShow-parity port carry 'importedAt'
+    // instead of 'timestamp' — historyTimestamp() below reads either.
     importHistory: [],
+    historySelected: {},      // timestamp -> true, for the History tab's row checkboxes
+    deleteHistoryConfirm: null, // "selected" | "all" | null — which delete is awaiting confirmation
+
+    // Setup tab > Import Schedule — separate save state from the Settings
+    // modal's (saveAppSettings), since this one is driven by an explicit Save
+    // button rather than per-field blur. See saveImportScheduleSettings().
+    importScheduleSaving: false,
+    importScheduleError: null,
+    importScheduleSaved: false,
+    // Setup tab > Import Schedule > "Import Now" — brief inline status text
+    // for one specific click, polled via import-schedule.php's 'status'.
+    importRequestStatus: null,
+    // Setup tab > Import Schedule > "View Logs" — server-archived log files
+    // (see logs.php); logsList is null until first opened/loaded, then an array.
+    logsPanelOpen: false,
+    logsList: null,
+    logsLoading: false,
+    logsError: null,
+    // Setup tab > Import Schedule > persisted "Last run" status (see
+    // import-schedule.php's mark_start/mark_run/run_status actions).
+    runStatus: null,
 
     zoom: 1,          // table zoom level (1 = 100%); lets all columns fit without scrolling
     zoomAutoFitDone: false, // the table defaults to "Fit" once per session (not on every
@@ -81,7 +106,14 @@
                              // here are a fallback for the brief window before that hook
                              // runs — app-settings.php's own $defaults is the real source.
       tshirtVendorEmail: "",
-      tshirtOrderSubject: "ETCC Vette Fest — T-Shirt Order"
+      tshirtOrderSubject: "ETCC Vette Fest — T-Shirt Order",
+      // Setup tab > Import Schedule (see lib.php's vettefest_settings_defaults()).
+      eventUrl: "",
+      autoImportEnabled: false,
+      autoImportTimes: [],
+      autoImportIntervalHours: 0,
+      autoImportStartDate: "",
+      autoImportEndDate: ""
     },
     appSettingsSaving: false,
     appSettingsError: null,
@@ -116,6 +148,11 @@
   // init() rather than at module-load time, since init() is what's guaranteed
   // to run after every inline script in the document, including that one.
   var SITE_CONFIG = {};
+
+  // Setup tab > Import Schedule > "Import Now" polling timer handle — plain
+  // module-level rather than in state, since it's a live setInterval handle
+  // (not renderable data) that must survive every re-render.
+  var importRequestPollTimer = null;
 
   var NUMERIC_BASE = { "Total Fee": 1, "Year": 1, "#": 1 };
   var CURRENCY_COLS = { "Total Fee": 1 };
@@ -329,7 +366,16 @@
   function buildTabs() {
     var mk = function (id, label) {
       var t = el("div", { class: "tab" + (state.tab === id ? " active" : ""), text: label });
-      t.addEventListener("click", function () { state.tab = id; renderViews(); });
+      t.addEventListener("click", function () {
+        state.tab = id;
+        renderViews();
+        // Both tabs show server-side state that a scheduled/manual import can
+        // change after this page was opened, so re-pull it on select rather
+        // than only at page load — otherwise an officer has to reload to see
+        // whether last night's run actually happened.
+        if (id === "setup") loadRunStatus();
+        if (id === "history") loadImportHistory();
+      });
       return t;
     };
     return el("div", { class: "tabs no-print" },
@@ -1684,35 +1730,26 @@
   }
 
   // ---------- Setup tab ----------
-  // The two "load data into this event" actions, gathered in one place:
-  //   - Import Registrations — the ClubExpress CSV pair (opens the existing
-  //     registrations-import.php upload form in a new tab; it was previously
-  //     buried in the Developer menu).
+  // The "load data into this event" actions plus the import automation,
+  // mirroring the sibling CarShow app's Setup tab:
   //   - Import Flyer — the event's marketing flyer (image or PDF), uploaded
   //     straight to flyer.php here and then printable from the Reports tab.
-  // Both server endpoints are session-gated (you're already logged in to see
-  // this), so the tab itself carries no extra password.
+  //   - Import Schedule — the ClubExpress Event URL, an "Import Now" button,
+  //     the auto-import schedule, the archived run logs, and (as its Manual
+  //     subsection) the by-hand registrations-import.php upload form.
+  // Every server endpoint here is session-gated (you're already logged in to
+  // see this), so the tab itself carries no extra password.
+
+  // A launcher link (opens its standalone PHP page in a new tab) with a hint
+  // line, optionally paired with an extra button (e.g. "❓ Instructions").
+  function buildSetupLauncher(href, label, hint, extraBtn) {
+    var link = el("a", { class: "btn", href: href, target: "_blank", rel: "noopener" }, [label]);
+    var linkRow = extraBtn ? el("div", { style: "display:flex; align-items:center; gap:8px" }, [link, extraBtn]) : link;
+    return el("div", { class: "setup-item" }, [linkRow, el("div", { class: "setup-hint", text: hint })]);
+  }
+
   function buildSetupView() {
     var wrap = el("div", { class: "view setup-view" });
-
-    // --- Import Registrations ---
-    var regPanel = el("div", { class: "panel" }, [el("h3", { text: "Import Registrations" })]);
-    regPanel.appendChild(el("div", { class: "hint", style: "margin-bottom:10px" },
-      ["Loads a fresh Registration Data / Activity Registrant Data CSV pair exported from ClubExpress. " +
-       "Opens the upload form in a new tab; come back and reload the app to see the new data."]));
-    if (state.result && state.result.meta) {
-      regPanel.appendChild(el("div", { class: "hint", style: "margin-bottom:10px" },
-        ["Current data loaded: " + fmtDate(state.result.meta.generatedAt) + "."]));
-    } else {
-      regPanel.appendChild(el("div", { class: "hint", style: "margin-bottom:10px" },
-        ["No registration data has been imported for this event yet."]));
-    }
-    var importRegsBtn = el("a", { class: "btn primary", href: "registrations-import.php", target: "_blank", rel: "noopener" },
-      ["📋 Import Registrations"]);
-    var instructionsBtn = el("button", { class: "btn", title: "How to get these files from ClubExpress" }, ["❓ Instructions"]);
-    instructionsBtn.addEventListener("click", openImportInstructions);
-    regPanel.appendChild(el("div", { class: "settings-actions" }, [importRegsBtn, instructionsBtn]));
-    wrap.appendChild(regPanel);
 
     // --- Import Flyer ---
     var flyerPanel = el("div", { class: "panel" }, [el("h3", { text: "Import Flyer" })]);
@@ -1747,44 +1784,546 @@
     }
     wrap.appendChild(flyerPanel);
 
+    wrap.appendChild(buildImportScheduleSection());
     return wrap;
   }
 
-  // ---------- History tab ----------
-  // A plain log of every successful CSV import for this event — timestamp,
-  // registration row count, activity row count — newest first. Recorded
-  // server-side at import time (vettefest_record_import_history() in
-  // lib.php) rather than derived from anything client-side, so it stays
-  // accurate regardless of whether an officer used the browser upload form
-  // or upload-registrations.js, and survives across reloads/re-imports the
-  // same way the stored CSV data itself does.
-  function buildHistoryView() {
-    var wrap = el("div", { class: "view history-view" });
-    var panel = el("div", { class: "panel" }, [el("h3", { text: "Import History" })]);
-    panel.appendChild(el("div", { class: "hint", style: "margin-bottom:10px" },
-      ["Every time a Registration Data / Activity Registrant Data CSV pair was imported for this event, oldest at the bottom."]));
+  // Setup tab > Import Schedule > "Log Directory" — server-archived run logs
+  // (logs.php), browsable from any machine logged into the site rather than
+  // only the one that ran the import. Purged after 7 days — see logs.php's
+  // VETTEFEST_LOG_PURGE_DAYS.
+  function buildLogDirectoryField() {
+    var toggleBtn = el("button", { type: "button", class: "btn btn-sm" },
+      [state.logsPanelOpen ? "▲ Hide Logs" : "📂 View Logs"]);
+    toggleBtn.addEventListener("click", toggleLogsPanel);
 
-    if (!state.importHistory.length) {
-      panel.appendChild(el("div", { class: "empty-state" }, ["No imports recorded yet for this event."]));
-      wrap.appendChild(panel);
-      return wrap;
+    var kids = [
+      el("div", {}, [toggleBtn]),
+      el("div", { class: "setup-hint" }, [
+        "Each import run's log is archived here — viewable from anywhere, purged automatically after 7 days."
+      ])
+    ];
+
+    if (state.logsPanelOpen) {
+      if (state.logsLoading) {
+        kids.push(el("div", { class: "hint" }, ["Loading…"]));
+      } else if (state.logsError) {
+        kids.push(el("div", { class: "form-error" }, [state.logsError]));
+      } else if (state.logsList && state.logsList.length) {
+        kids.push(el("table", { class: "grid", style: "margin-top:8px" }, [
+          el("thead", {}, [el("tr", {}, [el("th", { text: "Log" }), el("th", { text: "Saved" }), el("th", { text: "Size" })])]),
+          el("tbody", {}, state.logsList.map(function (f) {
+            var link = el("a", {
+              href: SITE_CONFIG.logsApiUrl + "&action=get&name=" + encodeURIComponent(f.name),
+              target: "_blank", rel: "noopener", text: f.name
+            });
+            return el("tr", {}, [
+              el("td", {}, [link]),
+              el("td", { text: f.mtime ? fmtDate(new Date(f.mtime)) : "" }),
+              el("td", { text: Math.max(1, Math.round(f.size / 1024)) + " KB" })
+            ]);
+          }))
+        ]));
+      } else if (state.logsList) {
+        kids.push(el("div", { class: "hint" }, ["No logs archived yet (or all have aged past the 7-day retention window)."]));
+      }
     }
 
-    var thead = el("thead", {}, [el("tr", {}, [
-      el("th", { text: "Imported" }),
-      el("th", { class: "num", text: "Registrations" }),
-      el("th", { class: "num", text: "Activities" })
-    ])]);
-    var tbody = el("tbody", {}, state.importHistory.map(function (h) {
-      return el("tr", {}, [
-        el("td", { text: h.importedAt ? fmtDate(h.importedAt) : "—" }),
-        el("td", { class: "num", text: String(h.regRows == null ? "—" : h.regRows) }),
-        el("td", { class: "num", text: String(h.actRows == null ? "—" : h.actRows) })
+    return el("div", {}, kids);
+  }
+
+  // Setup tab > Import Schedule > persisted "Last run" line — reads
+  // state.runStatus (fetched by loadRunStatus() on Setup-tab select). Distinct
+  // from the Import Now button's own ephemeral status text: this reflects
+  // whichever run happened most recently (manual or scheduled), and survives
+  // page reloads.
+  function buildLastRunLine() {
+    var rs = state.runStatus;
+    if (!rs || !rs.startedAt) {
+      return el("div", { class: "hint", style: "margin-bottom:10px" }, ["Last run: none recorded yet."]);
+    }
+    var reasonText = rs.reason === "manual" ? "Import Now"
+      : (rs.reason && rs.reason.indexOf("scheduled:") === 0 ? "scheduled " + rs.reason.slice("scheduled:".length) : (rs.reason || ""));
+    var parts = ["Last run: started " + fmtDate(new Date(rs.startedAt)) + (reasonText ? " (" + reasonText + ")" : "")];
+    var style = "margin-bottom:10px";
+    if (!rs.completedAt) {
+      parts.push(" — still running, or the scheduled task didn't get a chance to report completion.");
+    } else if (rs.status === "failed") {
+      parts.push(" — ❌ Failed at " + fmtDate(new Date(rs.completedAt)) + (rs.error ? ": " + rs.error : "") + ".");
+      style += "; color:var(--warn)";
+    } else {
+      parts.push(" — ✅ Succeeded at " + fmtDate(new Date(rs.completedAt)) + ".");
+      style += "; color:var(--good)";
+    }
+    return el("div", { style: style }, [parts.join("")]);
+  }
+
+  // Setup tab > Import Schedule — the ClubExpress event URL (used by the
+  // /ETCCVetteFestImportData Claude skill instead of a hardcoded URL that goes
+  // stale every year), an "Import Now" button, and an auto-import schedule
+  // (enable checkbox, one or more daily times, and an optional active-date
+  // range). None of this runs anything itself — see import-schedule.php's
+  // header comment and requestImportNow()/saveImportScheduleSettings() for how
+  // it actually reaches a scheduled task on an officer's machine, which is the
+  // only thing that can drive a real ClubExpress export.
+  function buildImportScheduleSection() {
+    var s = state.appSettings;
+
+    var eventUrlInput = el("input", { type: "text", value: s.eventUrl || "", placeholder: "https://www.etccwebsite.com/content.aspx?...&item_id=..." });
+
+    var importNowBtn = el("button", { type: "button", class: "btn primary" }, ["▶ Import Now"]);
+    importNowBtn.addEventListener("click", requestImportNow);
+    var importNowRow = el("div", { style: "display:flex; align-items:center; gap:10px" }, [importNowBtn]);
+    if (state.importRequestStatus) {
+      var isFailed = state.importRequestStatus.indexOf("Failed at ") === 0;
+      var isSucceeded = state.importRequestStatus.indexOf("Succeeded at ") === 0;
+      var statusStyle = isFailed ? "color:var(--warn)" : (isSucceeded ? "color:var(--good)" : "");
+      importNowRow.appendChild(el("span", { class: "count", style: statusStyle }, [state.importRequestStatus]));
+    }
+
+    var enableCb = el("input", { type: "checkbox" }); enableCb.checked = !!s.autoImportEnabled;
+
+    var startDateInput = el("input", { type: "date", value: s.autoImportStartDate || "" });
+    var endDateInput = el("input", { type: "date", value: s.autoImportEndDate || "" });
+
+    // One <input type=time> per configured daily run time — plain DOM
+    // add/remove rather than tracking a parallel array in state, since Save
+    // reads every row's current value straight off the DOM.
+    var timesWrap = el("div", {});
+    function addTimeRow(value) {
+      var input = el("input", { type: "time", value: value || "" });
+      var removeBtn = el("button", { type: "button", class: "btn", style: "padding:4px 10px" }, ["✕"]);
+      var row = el("div", { style: "display:flex; gap:6px; margin-bottom:6px; align-items:center" }, [input, removeBtn]);
+      removeBtn.addEventListener("click", function () { timesWrap.removeChild(row); });
+      timesWrap.appendChild(row);
+    }
+    (s.autoImportTimes || []).forEach(function (t) { addTimeRow(t); });
+    var addTimeBtn = el("button", { type: "button", class: "btn btn-sm" }, ["+ Add Time"]);
+    addTimeBtn.addEventListener("click", function () { addTimeRow(""); });
+
+    // "Every N hours, on the hour" — a simpler alternative (or addition) to
+    // picking explicit times one at a time. 0 = off. Active alongside any
+    // explicit times above, not instead of them — see import-schedule.php's
+    // 'check' action, which unions both into one slot list.
+    var intervalSel = el("select", {});
+    [
+      [0, "Off"], [1, "Every hour"], [2, "Every 2 hours"], [3, "Every 3 hours"],
+      [4, "Every 4 hours"], [6, "Every 6 hours"], [8, "Every 8 hours"], [12, "Every 12 hours"]
+    ].forEach(function (opt) {
+      var o = el("option", { value: String(opt[0]), text: opt[1] });
+      if (Number(s.autoImportIntervalHours) === opt[0]) o.setAttribute("selected", "selected");
+      intervalSel.appendChild(o);
+    });
+
+    var saveBtn = el("button", { type: "button", class: "btn primary" }, ["Save"]);
+    if (state.importScheduleSaving) saveBtn.setAttribute("disabled", "disabled");
+    saveBtn.addEventListener("click", function () {
+      var times = Array.prototype.map.call(timesWrap.querySelectorAll("input[type=time]"), function (i) { return i.value; })
+        .filter(function (v) { return v; });
+      saveImportScheduleSettings({
+        eventUrl: eventUrlInput.value.trim(),
+        autoImportEnabled: enableCb.checked,
+        autoImportTimes: times,
+        autoImportIntervalHours: Number(intervalSel.value),
+        autoImportStartDate: startDateInput.value,
+        autoImportEndDate: endDateInput.value
+      });
+    });
+    var saveStatus = [];
+    if (state.importScheduleSaving) saveStatus.push(el("span", { class: "count" }, ["Saving…"]));
+    else if (state.importScheduleSaved) saveStatus.push(el("span", { class: "count", style: "color:var(--good)" }, ["Saved."]));
+    if (state.importScheduleError) saveStatus.push(el("div", { class: "form-error" }, [state.importScheduleError]));
+
+    // Manual subsection — the browser-upload alternative to Import Now: pick
+    // the two CSVs by hand when Import Now/the schedule isn't available or
+    // convenient (e.g. the automation machine is off, or an officer already
+    // has the files and doesn't want to wait for a poll).
+    var instructionsBtn = el("button", { class: "btn", type: "button", title: "How to export these CSVs from ClubExpress" }, ["❓ Instructions"]);
+    instructionsBtn.addEventListener("click", openImportInstructions);
+    var manualHint = "Upload the ClubExpress registration + activity CSV export for this event, by hand, right now." +
+      (state.result && state.result.meta ? "  Current data loaded: " + fmtDate(state.result.meta.generatedAt) + "." : "  Nothing imported for this event yet.");
+    var manualSection = el("div", { style: "margin-top:18px; padding-top:14px; border-top:1px solid var(--line)" }, [
+      el("h4", { text: "Manual", style: "margin:0 0 8px" }),
+      buildSetupLauncher("registrations-import.php", "📋 Import Registrations", manualHint, instructionsBtn)
+    ]);
+
+    return el("div", { class: "panel", style: "margin-top:16px" }, [
+      el("h3", { text: "Import Schedule" }),
+      el("div", { class: "hint", style: "margin-bottom:10px" }, [
+        "Controls the /ETCCVetteFestImportData automation that pulls fresh ClubExpress data — that " +
+        "still only runs on a machine where Claude Code and Chrome are set up for it, and it checks " +
+        "in here periodically, so Import Now and scheduled times take effect within a few minutes, not instantly."
+      ]),
+      buildLastRunLine(),
+      el("div", { class: "form-row sched" }, [el("span", { class: "form-label", text: "Event URL" }), eventUrlInput]),
+      el("div", { class: "form-row sched" }, [
+        el("span", { class: "form-label", text: "Log Directory" }),
+        buildLogDirectoryField()
+      ]),
+      el("div", { class: "form-row sched" }, [el("span", { class: "form-label", text: "" }), importNowRow]),
+      el("div", { class: "form-row sched" }, [
+        el("label", {}, [enableCb, document.createTextNode(" Enable automatic imports")])
+      ]),
+      el("div", { class: "form-row sched" }, [
+        el("span", { class: "form-label", text: "Active dates" }),
+        el("div", { style: "display:flex; gap:8px; align-items:center" }, [
+          startDateInput, document.createTextNode("to"), endDateInput
+        ])
+      ]),
+      el("div", { class: "form-row sched" }, [
+        el("span", { class: "form-label", text: "Times" }),
+        el("div", {}, [timesWrap, addTimeBtn])
+      ]),
+      el("div", { class: "form-row sched" }, [
+        el("span", { class: "form-label", text: "Interval" }),
+        el("div", {}, [
+          intervalSel,
+          el("div", { class: "setup-hint" }, ["Runs alongside any Times above, not instead of them."])
+        ])
+      ]),
+      el("div", { class: "settings-actions" }, [saveBtn].concat(saveStatus)),
+      manualSection
+    ]);
+  }
+
+  // ---------- History tab ----------
+  // Read-only log of every registration-data import ATTEMPT for this event
+  // (registrations-upload.php's CLI path and registrations-import.php's
+  // browser path each append a success entry; import-schedule.php's mark_run
+  // appends a failure one). Newest first, since that's almost always the entry
+  // someone wants to check ("did today's import actually happen?").
+
+  // Entries written before the CarShow-parity port used 'importedAt' as the
+  // key; everything since uses 'timestamp'. One accessor so every read site
+  // (display, selection identity, delete) agrees on which to use.
+  function historyTimestamp(r) { return (r && (r.timestamp || r.importedAt)) || null; }
+
+  function buildHistoryView() {
+    var rows = state.importHistory.slice().reverse();
+    // Prune stale selections (e.g. after a delete, or a fresh reload changed
+    // which timestamps exist) so a leftover checked box can't silently
+    // target an entry that isn't shown anymore.
+    var liveTimestamps = {};
+    rows.forEach(function (r) { var ts = historyTimestamp(r); if (ts) liveTimestamps[ts] = true; });
+    Object.keys(state.historySelected).forEach(function (ts) { if (!liveTimestamps[ts]) delete state.historySelected[ts]; });
+
+    var body;
+    var toolbar = null;
+    if (!rows.length) {
+      body = el("div", { class: "empty-state" }, ["No imports recorded yet — this fills in the next time a CSV pair is imported via the Setup tab."]);
+    } else {
+      var selectedCount = selectedHistoryTimestamps().length;
+      var selectAllCb = el("input", { type: "checkbox" });
+      selectAllCb.checked = rows.length > 0 && selectedCount === rows.length;
+      selectAllCb.addEventListener("change", function () {
+        rows.forEach(function (r) { var ts = historyTimestamp(r); if (ts) toggleHistorySelected(ts, selectAllCb.checked); });
+        renderViews();
+      });
+
+      var deleteSelectedBtn = el("button", { class: "btn btn-warn" }, ["🗑 Delete Selected" + (selectedCount ? " (" + selectedCount + ")" : "")]);
+      if (!selectedCount) deleteSelectedBtn.setAttribute("disabled", "disabled");
+      deleteSelectedBtn.addEventListener("click", function () { openDeleteHistoryConfirm("selected"); });
+      var deleteAllBtn = el("button", { class: "btn btn-warn" }, ["🗑 Delete All"]);
+      deleteAllBtn.addEventListener("click", function () { openDeleteHistoryConfirm("all"); });
+      toolbar = el("div", { class: "settings-actions", style: "margin-bottom:10px" }, [deleteSelectedBtn, deleteAllBtn]);
+
+      var table = el("table", { class: "grid" }, [
+        el("thead", {}, [el("tr", {}, [
+          el("th", {}, [selectAllCb]),
+          el("th", { text: "" }),
+          el("th", { text: "Log" }),
+          el("th", { text: "Imported" }),
+          el("th", { text: "Registrations" }),
+          el("th", { text: "Activities" }),
+          el("th", { text: "Source" }),
+          el("th", { text: "Event URL" })
+        ])]),
+        el("tbody", {}, rows.map(function (r) {
+          var ts = historyTimestamp(r);
+          var failed = r.outcome === "failed";
+          var outcomeCell = el("td", {
+            title: failed ? ("Failed" + (r.error ? ": " + r.error : "")) : "Succeeded",
+            style: "text-align:center"
+          }, [failed ? "❌" : "✅"]);
+
+          var cb = el("input", { type: "checkbox" });
+          cb.checked = !!(ts && state.historySelected[ts]);
+          cb.addEventListener("change", function () { toggleHistorySelected(ts, cb.checked); renderViews(); });
+          var selectCell = el("td", { style: "text-align:center" }, [cb]);
+
+          // Right next to the outcome icon (not squeezed past a long Event
+          // URL column at the far right) so it's actually noticeable —
+          // labeled with its own header rather than blank.
+          var logCell;
+          if (r.logFile && SITE_CONFIG.logsApiUrl) {
+            // Logs are archived server-side (logs.php) — viewable by anyone
+            // logged into the site, not just the machine that ran the
+            // import. Purged after 7 days.
+            var logLink = el("a", {
+              class: "btn btn-sm",
+              href: SITE_CONFIG.logsApiUrl + "&action=get&name=" + encodeURIComponent(r.logFile),
+              title: "View log (" + r.logFile + ")",
+              target: "_blank", rel: "noopener"
+            }, ["📄 Log"]);
+            logCell = el("td", { style: "text-align:center; white-space:nowrap" }, [logLink]);
+          } else {
+            logCell = el("td", { style: "text-align:center; color:var(--muted)" }, ["—"]);
+          }
+
+          return el("tr", {}, [
+            selectCell,
+            outcomeCell,
+            logCell,
+            el("td", { text: ts ? fmtDate(new Date(ts)) : "" }),
+            el("td", { text: String(r.regRows != null ? r.regRows : "—") }),
+            el("td", { text: String(r.actRows != null ? r.actRows : "—") }),
+            el("td", { text: r.source === "cli" ? "Scheduled sync" : "Manual upload" }),
+            el("td", { style: "max-width:260px; white-space:normal; overflow-wrap:break-word; word-break:break-all" }, [r.eventUrl || "—"])
+          ]);
+        }))
       ]);
-    }));
-    panel.appendChild(el("table", { class: "grid" }, [thead, tbody]));
-    wrap.appendChild(panel);
-    return wrap;
+      body = el("div", { class: "tablewrap" }, [table]);
+    }
+    return el("div", { class: "view history-view" }, [
+      el("div", { class: "panel" }, [
+        el("h3", { text: "Import History" }),
+        toolbar,
+        body
+      ].filter(Boolean))
+    ]);
+  }
+
+  // ---------- Setup/History tab server calls ----------
+
+  // Setup tab > Import Schedule's own save — same app-settings.php endpoint
+  // and patch shape as saveAppSettings(), but a SEPARATE function rather than
+  // reusing it: saveAppSettings deliberately skips re-rendering until its
+  // request settles (it's wired to per-field blur events that fire while
+  // someone might still be tabbing through the Settings modal). This one is
+  // wired to a single explicit Save button click, so re-rendering immediately
+  // (to show "Saving…") carries none of that focus-stealing risk.
+  function saveImportScheduleSettings(patch) {
+    Object.keys(patch).forEach(function (k) { state.appSettings[k] = patch[k]; });
+    state.importScheduleSaving = true;
+    state.importScheduleError = null;
+    state.importScheduleSaved = false;
+    renderViews();
+    if (!SITE_CONFIG.appSettingsApiUrl) { state.importScheduleSaving = false; renderViews(); return; }
+    fetch(SITE_CONFIG.appSettingsApiUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "save", settings: patch })
+    }).then(function (res) {
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      state.importScheduleSaving = false;
+      state.importScheduleSaved = true;
+      renderViews();
+    }).catch(function () {
+      state.importScheduleSaving = false;
+      state.importScheduleError = "Could not save — check your connection and try again.";
+      renderViews();
+    });
+  }
+
+  // Setup tab > Import Schedule > "Import Now" — leaves a request flag
+  // (import-schedule.php action=request) for a scheduled Claude Code task on
+  // an officer's machine to pick up on its next poll. This endpoint cannot
+  // itself drive a browser through ClubExpress, so there's an inherent delay —
+  // the status text says so rather than implying anything happens instantly.
+  function requestImportNow() {
+    if (!SITE_CONFIG.importScheduleApiUrl) return;
+    stopImportRequestPolling();
+    state.importRequestStatus = "Requesting…";
+    renderViews();
+    fetch(SITE_CONFIG.importScheduleApiUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "request" })
+    }).then(function (res) { return res.json().then(function (data) { return { ok: res.ok, data: data }; }); })
+      .then(function (r) {
+        if (r.ok && r.data && r.data.ok) {
+          state.importRequestStatus = "Requested — the next scheduled check will run the import.";
+          startImportRequestPolling(r.data.requestedAt);
+        } else {
+          state.importRequestStatus = "Could not request an import — please try again.";
+        }
+        renderViews();
+      }).catch(function () {
+        state.importRequestStatus = "Could not request an import — check your connection and try again.";
+        renderViews();
+      });
+  }
+
+  // Polls import-schedule.php's 'status' action every 30s until the scheduled
+  // task marks THIS specific request handled (comparing handledAt to the
+  // requestedAt this click produced, not just "handledAt is set", so a stale
+  // handledAt from a PRIOR click can't be mistaken for this one having run).
+  // Capped at 40 attempts (~20 minutes) so a page left open indefinitely
+  // doesn't poll forever if something's stuck.
+  function stopImportRequestPolling() {
+    if (importRequestPollTimer) { clearInterval(importRequestPollTimer); importRequestPollTimer = null; }
+  }
+  function startImportRequestPolling(requestedAt) {
+    var attempts = 0;
+    importRequestPollTimer = setInterval(function () {
+      attempts++;
+      if (attempts > 40) { stopImportRequestPolling(); return; }
+      fetch(SITE_CONFIG.importScheduleApiUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "status" })
+      }).then(function (res) { return res.json(); })
+        .then(function (data) {
+          if (data && data.ok && data.handledAt && (!requestedAt || new Date(data.handledAt) >= new Date(requestedAt))) {
+            var when = fmtDate(new Date(data.handledAt));
+            state.importRequestStatus = data.lastStatus === "failed"
+              ? "Failed at " + when + (data.lastError ? ": " + data.lastError : "") + " — see the History tab or the archived log."
+              : "Succeeded at " + when + ".";
+            stopImportRequestPolling();
+            loadRunStatus();
+            renderViews();
+          }
+        }).catch(function () { /* transient network hiccup — keep polling, don't surface it */ });
+    }, 30000);
+  }
+
+  // Setup tab > Import Schedule > persisted "Last run" status — fetched on
+  // Setup-tab select, and again whenever an Import Now click's own polling
+  // resolves, so both status lines update together.
+  function loadRunStatus() {
+    if (!SITE_CONFIG.importScheduleApiUrl) return;
+    fetch(SITE_CONFIG.importScheduleApiUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "run_status" })
+    }).then(function (res) { return res.json().then(function (data) { return { ok: res.ok, data: data }; }); })
+      .then(function (r) {
+        if (r.ok && r.data && r.data.ok) {
+          state.runStatus = r.data.runStatus || null;
+          if (state.tab === "setup") renderViews();
+        }
+      }).catch(function () { /* keep showing whatever's already loaded */ });
+  }
+
+  // Setup tab > Import Schedule > "View Logs" — server-archived log files
+  // (logs.php action=list/get), so the directory is browsable from any
+  // machine logged into the site, not just the one that ran the import.
+  function toggleLogsPanel() {
+    state.logsPanelOpen = !state.logsPanelOpen;
+    if (state.logsPanelOpen && state.logsList === null) {
+      loadLogsList();
+      return; // loadLogsList() already re-renders
+    }
+    renderViews();
+  }
+  function loadLogsList() {
+    if (!SITE_CONFIG.logsApiUrl) return;
+    state.logsLoading = true;
+    state.logsError = null;
+    renderViews();
+    fetch(SITE_CONFIG.logsApiUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "list" })
+    }).then(function (res) { return res.json().then(function (data) { return { ok: res.ok, data: data }; }); })
+      .then(function (r) {
+        state.logsLoading = false;
+        if (r.ok && r.data && r.data.ok) {
+          state.logsList = r.data.files || [];
+        } else {
+          state.logsError = "Could not load the log list.";
+        }
+        renderViews();
+      }).catch(function () {
+        state.logsLoading = false;
+        state.logsError = "Could not load the log list — check your connection.";
+        renderViews();
+      });
+  }
+
+  // History tab — re-pull the log on each tab select, so an import that landed
+  // since this page was opened shows up without a full reload. Silent on
+  // failure: the page keeps showing whatever it already had rather than
+  // surfacing an error for a background refresh nobody asked to retry.
+  function loadImportHistory() {
+    if (!SITE_CONFIG.importHistoryApiUrl) return;
+    fetch(SITE_CONFIG.importHistoryApiUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "list" })
+    }).then(function (res) { return res.json().then(function (data) { return { ok: res.ok, data: data }; }); })
+      .then(function (r) {
+        if (r.ok && r.data && r.data.ok && Array.isArray(r.data.history)) {
+          state.importHistory = r.data.history;
+          if (state.tab === "history") renderViews();
+        }
+      }).catch(function () { /* keep showing whatever's already loaded */ });
+  }
+
+  // History tab row selection + delete. Entries have no stable id field, so
+  // their timestamp is the identity — second-precision, unique in practice
+  // since two imports never actually complete in the same second.
+  function selectedHistoryTimestamps() { return Object.keys(state.historySelected); }
+  function toggleHistorySelected(ts, checked) {
+    if (!ts) return;
+    if (checked) state.historySelected[ts] = true; else delete state.historySelected[ts];
+  }
+  function openDeleteHistoryConfirm(mode) {
+    if (mode === "selected" && !selectedHistoryTimestamps().length) return;
+    state.deleteHistoryConfirm = mode;
+    renderDeleteHistoryConfirm();
+  }
+  function closeDeleteHistoryConfirm() { state.deleteHistoryConfirm = null; renderDeleteHistoryConfirm(); }
+  function performDeleteHistory() {
+    var mode = state.deleteHistoryConfirm;
+    closeDeleteHistoryConfirm();
+    if (!SITE_CONFIG.importHistoryApiUrl) return;
+    var body = mode === "all" ? { action: "delete", all: true } : { action: "delete", timestamps: selectedHistoryTimestamps() };
+    fetch(SITE_CONFIG.importHistoryApiUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    }).then(function (res) { return res.json().then(function (data) { return { ok: res.ok, data: data }; }); })
+      .then(function (r) {
+        if (r.ok && r.data && r.data.ok && Array.isArray(r.data.history)) {
+          state.importHistory = r.data.history;
+          state.historySelected = {};
+        }
+        renderViews();
+      }).catch(function () { renderViews(); });
+  }
+  function renderDeleteHistoryConfirm() {
+    var host = $("#confirmHost");
+    if (!host) return;
+    host.innerHTML = "";
+    if (!state.deleteHistoryConfirm) return;
+
+    var all = state.deleteHistoryConfirm === "all";
+    var count = all ? state.importHistory.length : selectedHistoryTimestamps().length;
+
+    var closeBtn = el("button", { class: "btn" }, ["✕"]);
+    closeBtn.addEventListener("click", closeDeleteHistoryConfirm);
+    var head = el("div", { class: "modal-head" }, [
+      el("h3", { text: "Delete " + (all ? "all " + count : count) + " Import History entr" + (count === 1 ? "y" : "ies") + "?" }),
+      el("span", { class: "spacer" }), closeBtn
+    ]);
+
+    var yesBtn = el("button", { class: "btn primary", style: "background:var(--warn);border-color:var(--red-dark)" }, ["Yes, Delete"]);
+    yesBtn.addEventListener("click", performDeleteHistory);
+    var noBtn = el("button", { class: "btn" }, ["Cancel"]);
+    noBtn.addEventListener("click", closeDeleteHistoryConfirm);
+
+    var body = el("div", { class: "modal-body" }, [
+      el("p", {}, ["This permanently removes " + (all ? "the entire Import History log" : count + " selected entr" + (count === 1 ? "y" : "ies")) +
+        " from the server. It does not affect the actual registration data those imports loaded — only this log. This cannot be undone."]),
+      el("div", { class: "settings-actions" }, [yesBtn, noBtn])
+    ]);
+
+    var modal = el("div", { class: "modal" }, [head, body]);
+    modal.addEventListener("click", function (e) { e.stopPropagation(); });
+    var backdrop = el("div", { class: "modal-backdrop" }, [modal]);
+    backdrop.addEventListener("click", closeDeleteHistoryConfirm);
+    host.appendChild(backdrop);
   }
 
   // POSTs the chosen flyer file to flyer.php (multipart) for the open event,
@@ -2460,6 +2999,7 @@
       if (state.tshirtOrderPageOpen) { closeTshirtOrderPage(); return; }
       if (state.showPendingDelete) { cancelDeleteShow(); return; }
       if (state.importInstructionsOpen) { closeImportInstructions(); return; }
+      if (state.deleteHistoryConfirm) { closeDeleteHistoryConfirm(); return; }
       if (state.deleteRegSelectedOpen) { closeDeleteRegSelectedConfirm(); return; }
       if (state.menuOpen) { closeMenu(); return; }
       if (state.detailRow) closeDetail();

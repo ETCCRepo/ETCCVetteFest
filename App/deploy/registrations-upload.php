@@ -66,6 +66,24 @@ if (!vettefest_write_json($regFile, $data)) {
     exit;
 }
 
-vettefest_record_import_history($year, vettefest_csv_data_row_count($regCsv), vettefest_csv_data_row_count($actCsv));
+// eventUrl: the caller (upload-registrations.js, driven by the
+// /ETCCVetteFestImportData skill) may name the ClubExpress URL this export
+// actually came from; fall back to whatever the Setup tab currently has
+// configured. logFile: the exact filename it archived this run's log under
+// via logs.php — the History tab's 📄 icon links to that server-side copy.
+$eventUrl = (string)($input['eventUrl'] ?? '');
+if ($eventUrl === '') {
+    $settings = vettefest_read_settings($year);
+    $eventUrl = (string)($settings['eventUrl'] ?? '');
+}
+$logFile = (string)($input['logFile'] ?? '');
+vettefest_record_import_history(
+    $year,
+    vettefest_csv_data_row_count($regCsv),
+    vettefest_csv_data_row_count($actCsv),
+    'cli',
+    $eventUrl,
+    $logFile
+);
 
 echo json_encode(['ok' => true]);

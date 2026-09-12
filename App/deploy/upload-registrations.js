@@ -37,6 +37,14 @@ var actCsvPath = process.argv[3] || newestMatching(EXPORTS_DIR, "activity_regist
 var url = process.argv[4] || DEFAULT_URL;
 var password = process.env.VETTEFEST_SITE_PASSWORD;
 var year = process.env.VETTEFEST_YEAR || String(new Date().getFullYear());
+// Provenance recorded in the History tab, both optional:
+//   VETTEFEST_EVENT_URL — the ClubExpress URL this export actually came from,
+//     so the audit trail shows the real source rather than falling back to
+//     whatever the Setup tab happens to hold at read time.
+//   VETTEFEST_LOG_FILE  — the bare filename this run's log was archived under
+//     via logs.php, so the History tab's 📄 icon can link straight to it.
+var eventUrl = process.env.VETTEFEST_EVENT_URL || "";
+var logFile = process.env.VETTEFEST_LOG_FILE || "";
 
 if (!password) {
   console.error("Set VETTEFEST_SITE_PASSWORD to the site's login password before running this.");
@@ -54,7 +62,10 @@ var actCsv = fs.readFileSync(actCsvPath, "utf8");
 // the newer of the two files' mtimes, not upload time.
 var generatedAtMs = Math.max(fs.statSync(regCsvPath).mtimeMs, fs.statSync(actCsvPath).mtimeMs);
 
-var payload = JSON.stringify({ regCsv: regCsv, actCsv: actCsv, generatedAt: generatedAtMs, password: password, year: year });
+var payload = JSON.stringify({
+  regCsv: regCsv, actCsv: actCsv, generatedAt: generatedAtMs,
+  password: password, year: year, eventUrl: eventUrl, logFile: logFile
+});
 var u = new URL(url);
 
 var req = https.request({

@@ -119,7 +119,10 @@ $perShowUrls = [
     'deletedRegistrationsApiUrl' => 'deleted-registrations.php',
     'registrationOverridesApiUrl' => 'registration-overrides.php',
     'sendTshirtOrderEmailApiUrl' => 'send-tshirt-order-email.php',
-    'flyerApiUrl' => 'flyer.php'
+    'flyerApiUrl' => 'flyer.php',
+    'importScheduleApiUrl' => 'import-schedule.php',
+    'importHistoryApiUrl' => 'import-history.php',
+    'logsApiUrl' => 'logs.php'
 ];
 $siteConfig = [];
 foreach ($perShowUrls as $key => $file) {
@@ -161,13 +164,13 @@ if ($year !== null) {
         : ['exists' => false];
     $bootParts[] = "    window.__vettefest.ingestFlyer(" . vettefest_safe_inline_json($flyerMeta) . ");\n";
 
-    // The History tab's log — one entry per successful import (browser form
-    // or upload-registrations.js, see vettefest_record_import_history() in
-    // lib.php), newest first so the most recent refresh is always on top.
+    // The History tab's log — one entry per import attempt (the browser form,
+    // upload-registrations.js, or a failed scheduled run recorded by
+    // import-schedule.php's mark_run). Shipped in FILE order (oldest first,
+    // i.e. append order); buildHistoryView() reverses it for display, matching
+    // the sibling CarShow app — don't sort here, or the view's reverse() would
+    // flip it back to oldest-first.
     $importHistory = vettefest_read_json_list(vettefest_show_file($year, 'import-history.json'));
-    usort($importHistory, function ($a, $b) {
-        return strcmp($b['importedAt'] ?? '', $a['importedAt'] ?? '');
-    });
     $bootParts[] = "    window.__vettefest.ingestImportHistory(" . vettefest_safe_inline_json($importHistory) . ");\n";
 
     // MUST run before the ingestRows() call below — regenerate() (triggered

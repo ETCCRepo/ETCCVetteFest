@@ -75,7 +75,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['reg_csv'])) {
             ];
             if (vettefest_write_json($REG_FILE, $data)) {
                 $imported = ['regRows' => $regRows, 'actRows' => $actRows];
-                vettefest_record_import_history($year, $regRows, $actRows);
+                // Best-effort: this page has no per-request event URL of its
+                // own (it's a manual file picker, not a ClubExpress-driving
+                // script), so record whatever's currently configured in the
+                // Setup tab as the URL this import was presumably taken from.
+                // No Claude skill/log is involved in a manual browser upload,
+                // hence no logFile.
+                $settings = vettefest_read_settings($year);
+                vettefest_record_import_history(
+                    $year, $regRows, $actRows,
+                    'browser', (string)($settings['eventUrl'] ?? ''), ''
+                );
             } else {
                 $errors[] = 'Could not save the registration data — please try again.';
             }

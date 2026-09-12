@@ -88,13 +88,26 @@ function vettefest_csv_data_row_count($csvText) {
 // which path officers use to refresh the data. Best-effort: a failure here
 // never blocks the import itself (the registration data is already saved by
 // the time this runs), it just means that one import goes unlogged.
-function vettefest_record_import_history($year, $regRows, $actRows) {
+// $source is 'cli' (upload-registrations.js / the import skill) or 'browser'
+// (the manual registrations-import.php file picker); $eventUrl/$logFile are
+// best-effort provenance shown by the History tab (the ClubExpress URL the
+// export came from, and the logs.php filename its 📄 link opens).
+//
+// Writes 'timestamp' rather than the older 'importedAt' key this used before
+// the CarShow-parity port — buildHistoryView() reads either, so entries
+// written by the previous version still render instead of showing a blank
+// date.
+function vettefest_record_import_history($year, $regRows, $actRows, $source = 'browser', $eventUrl = '', $logFile = '') {
     $file = vettefest_show_file($year, 'import-history.json');
     if ($file === null) return false;
     return vettefest_append_json_list($file, [
-        'importedAt' => gmdate('c'),
-        'regRows' => (int)$regRows,
-        'actRows' => (int)$actRows,
+        'timestamp' => gmdate('c'),
+        'regRows' => $regRows === null ? null : (int)$regRows,
+        'actRows' => $actRows === null ? null : (int)$actRows,
+        'source' => $source,
+        'eventUrl' => (string)$eventUrl,
+        'outcome' => 'success',
+        'logFile' => (string)$logFile,
     ]);
 }
 
@@ -342,6 +355,22 @@ function vettefest_settings_defaults() {
     return [
         'tshirtVendorEmail'  => '',
         'tshirtOrderSubject' => 'ETCC Vette Fest — T-Shirt Order',
+        // --- Setup tab > Import Schedule (see import-schedule.php) ---
+        // eventUrl: the ClubExpress event Admin Panels URL for this event's
+        // year, read by the /ETCCVetteFestImportData skill instead of a
+        // hardcoded URL that goes stale every year.
+        'eventUrl' => '',
+        // autoImportTimes is a list of explicit "HH:MM" (24-hour, America/
+        // New_York) times to run an import each day. autoImportIntervalHours
+        // (0 = off) is a simpler "every N hours, on the hour" alternative;
+        // import-schedule.php's 'check' unions both into one slot list rather
+        // than letting one override the other, so they stay independently
+        // editable and can be used together.
+        'autoImportEnabled' => false,
+        'autoImportTimes' => [],
+        'autoImportIntervalHours' => 0,
+        'autoImportStartDate' => '',
+        'autoImportEndDate' => ''
     ];
 }
 
@@ -369,6 +398,9 @@ function vettefest_show_files() {
         'registration-overrides.json',
         'app-settings.json',
         'flyer.json',
-        'import-history.json'
+        'import-history.json',
+        'import-request.json',
+        'import-schedule-state.json',
+        'import-run-status.json'
     ];
 }

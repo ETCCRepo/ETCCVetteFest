@@ -279,7 +279,7 @@ th.pinned { z-index: 3; }
 .tshirt-view .form-group textarea { width: 100%; padding: 8px; border: 1px solid var(--line); border-radius: 4px; font-family: inherit; }
 .tshirt-view .form-value { padding: 8px; background: #f5f5f5; border-radius: 4px; }
 
-/* Setup tab — Import Registrations / Import Flyer */
+/* Setup tab — Import Registrations / Import Flyer / Import Schedule */
 .setup-view { max-width: 700px; margin: 0 auto; }
 .setup-view .panel { margin-bottom: 20px; }
 .setup-view .form-row { display: block; }
@@ -287,6 +287,18 @@ th.pinned { z-index: 3; }
   width: 100%; padding: 8px; border: 1px solid var(--line); border-radius: 6px;
   font-family: inherit; font-size: 13px; background: #fff;
 }
+/* Import Schedule's own rows keep the label/field side-by-side layout the
+   Settings modal uses, overriding the block rule above. */
+.setup-view .panel .form-row.sched { display: flex; align-items: flex-start; gap: 10px; }
+.setup-item { display: flex; flex-direction: column; gap: 4px; }
+.setup-hint { font-size: 12px; color: var(--muted); }
+.btn-sm { font-size: 12px; padding: 4px 10px; }
+.btn-warn { background: var(--warn); border-color: var(--red-dark); color: #fff; }
+.btn-warn:hover:not([disabled]) { background: var(--red-dark); }
+.btn-warn[disabled] { opacity: 0.5; cursor: default; }
+
+/* History tab — import log table */
+.history-view .tablewrap { max-height: none; }
 
 /* summary */
 .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 16px; }
