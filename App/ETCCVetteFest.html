@@ -120,7 +120,51 @@ footer.app-footer .footer-credit { font-size: 10px; margin-top: 4px; }
 .zoomgroup .count { min-width: 38px; text-align: center; }
 
 /* table */
+/* The calc() here is a FALLBACK only — a rough guess at the chrome above the
+   table, used by the History tab's short log table and by any browser
+   without :has() support. The Registration table (marked .fill) gets the
+   real treatment below: the app shell becomes a fixed-height flex column and
+   the table takes exactly whatever viewport is left over, so there's no
+   magic number to be wrong about on a given device.
+   IMPORTANT: never put `zoom` on .tablewrap — zoom rescales the element's own
+   lengths, so a zoomed wrap renders its height at zoom x the authored value
+   (this is what shrank the Registration table to ~60% of its intended height
+   on desktop and iPad). The zoom belongs on the inner <table>; see
+   buildRegView() in app.js. */
 .tablewrap { overflow: auto; max-height: calc(100vh - 250px); border: 1px solid var(--line); border-radius: 10px; background: #fff; }
+
+/* Full-height Registration table. Screen only — print has its own .tablewrap
+   rules further down, and a fixed-height/overflow-hidden body would clip a
+   printed report to one page.
+   The whole point: no device-specific guess. body becomes a 100dvh flex
+   column; header, tabs, toolbar and footer take their natural heights; the
+   table gets `flex: 1` — literally "whatever is left". A taller toolbar or a
+   collapsing iPad browser bar just changes what's left over, with no JS and
+   no feedback loop (a JS attempt that measures the footer's position to size
+   the table is circular — the footer sits BELOW the table, so its position
+   depends on the height being computed, which can collapse the table
+   progressively on some devices). Flex has no such circularity: the browser
+   solves it in one pass. Browsers without :has() simply keep the calc()
+   fallback above. */
+@media screen {
+  body:has(.tablewrap.fill) {
+    height: 100vh; height: 100dvh;
+    display: flex; flex-direction: column; overflow: hidden;
+  }
+  body:has(.tablewrap.fill) .wrap {
+    flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column;
+    padding-bottom: 16px; /* the usual 60px is for page-scroll breathing room */
+  }
+  body:has(.tablewrap.fill) #app,
+  body:has(.tablewrap.fill) #app > .view {
+    flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column;
+  }
+  /* min-height keeps a few rows visible rather than collapsing to nothing on
+     a very short window; below that the shell just clips, same as any
+     too-small viewport. */
+  .tablewrap.fill { flex: 1 1 auto; min-height: 200px; max-height: none; }
+}
+
 table.grid { border-collapse: separate; border-spacing: 0; width: 100%; font-size: 13px; }
 table.grid th, table.grid td { padding: 6px 9px; border-bottom: 1px solid var(--line); white-space: nowrap; text-align: left; vertical-align: middle; }
 /* Without this, a checkbox's intrinsic box (Sponsors tab's row-select column)
@@ -439,7 +483,7 @@ a.show-open:hover { text-decoration: underline; }
   <div id="app"></div>
 </div>
 <footer class="app-footer">
-  <div>v2.18 &middot; Deployed 09/12/2026 12:19 PM</div>
+  <div>v2.20 &middot; Deployed 09/12/2026 12:32 PM</div>
   <div class="footer-credit">Website by Business Web Express &middot; <a href="mailto:info@businesswebexpress.com">info@businesswebexpress.com</a></div>
   <div class="footer-credit">&copy; 2026 East Tennessee Corvette Club &middot; Knoxville, TN &middot; <a href="mailto:etccwebsite.webmanager@gmail.com">etccwebsite.webmanager@gmail.com</a></div>
 </footer>
@@ -1641,7 +1685,7 @@ window.__vettefestReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQ
     // regRows, actRows, source, eventUrl, outcome, error, logFile }) in FILE
     // order (oldest first); buildHistoryView() reverses it for display. Filled
     // by ingestImportHistory() from index.php's boot script and refreshed by
-    // loadImportHistory() on each History-tab select. Recorded server-side at
+    // refreshShowData() on every tab select. Recorded server-side at
     // import time (see vettefest_record_import_history() in lib.php and
     // import-schedule.php's mark_run for failures), not client-side, so it
     // stays accurate regardless of which import path an officer used.
@@ -1959,12 +2003,14 @@ window.__vettefestReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQ
       t.addEventListener("click", function () {
         state.tab = id;
         renderViews();
-        // Both tabs show server-side state that a scheduled/manual import can
-        // change after this page was opened, so re-pull it on select rather
-        // than only at page load — otherwise an officer has to reload to see
-        // whether last night's run actually happened.
+        // Every tab re-pulls the event's data on selection — a scheduled or
+        // manual import (or another officer's edit) that landed after this
+        // page was opened should show up without a full reload, on whichever
+        // tab you're looking at, not just History/Setup.
+        refreshShowData();
+        // Setup tab additionally needs the persisted "Last run" status,
+        // which isn't part of the general event-data refresh above.
         if (id === "setup") loadRunStatus();
-        if (id === "history") loadImportHistory();
       });
       return t;
     };
@@ -2353,8 +2399,16 @@ window.__vettefestReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQ
       htr.appendChild(th);
     });
     thead.appendChild(htr);
-    var table = el("table", { class: "grid" }, [thead, el("tbody", { id: "regbody" })]);
-    var wrap = el("div", { class: "tablewrap", style: "zoom:" + state.zoom }, [table]);
+    // zoom goes on the TABLE, never on .tablewrap. `zoom` rescales the
+    // element's own lengths, so a zoomed .tablewrap renders its max-height at
+    // zoom x the authored value — at the ~60% fit-zoom this picks on a wide
+    // screen that silently cut the visible table (and the row count with it)
+    // to 60% of what the CSS asked for, differently on every screen width.
+    // See updatePinnedOffsets()'s note: this is the same "zoom rescales
+    // lengths" trap. .tablewrap.fill (styles.css) is what actually makes the
+    // table fill the remaining viewport, on desktop and iPad alike.
+    var table = el("table", { class: "grid", style: "zoom:" + state.zoom }, [thead, el("tbody", { id: "regbody" })]);
+    var wrap = el("div", { class: "tablewrap fill" }, [table]);
     setTimeout(function () {
       renderRegBody();
       if (!state.zoomAutoFitDone) { state.zoomAutoFitDone = true; fitZoom(); }
@@ -2395,15 +2449,17 @@ window.__vettefestReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQ
   // Measure how wide the table naturally wants to be vs. how much room is
   // actually available, and pick a zoom level that makes every column fit —
   // instead of making the user guess a percentage via the +/− buttons.
+  // The zoom lives on the table (see buildRegView), so measure and restore it
+  // there — .tablewrap itself is never zoomed.
   function fitZoom() {
     var wrap = $(".tablewrap");
     var table = wrap && wrap.querySelector("table.grid");
     if (!wrap || !table) return;
-    var availableWidth = wrap.parentElement.clientWidth; // not itself zoomed
-    var priorZoom = wrap.style.zoom;
-    wrap.style.zoom = "1"; // measure at true scale, independent of current zoom
+    var availableWidth = wrap.clientWidth; // the unzoomed scroll container
+    var priorZoom = table.style.zoom;
+    table.style.zoom = "1"; // measure at true scale, independent of current zoom
     var naturalWidth = table.scrollWidth;
-    wrap.style.zoom = priorZoom;
+    table.style.zoom = priorZoom;
     if (!naturalWidth) return;
     setZoom(availableWidth / naturalWidth);
   }
@@ -3772,22 +3828,39 @@ window.__vettefestReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQ
       });
   }
 
-  // History tab — re-pull the log on each tab select, so an import that landed
-  // since this page was opened shows up without a full reload. Silent on
-  // failure: the page keeps showing whatever it already had rather than
-  // surfacing an error for a background refresh nobody asked to retry.
-  function loadImportHistory() {
-    if (!SITE_CONFIG.importHistoryApiUrl) return;
-    fetch(SITE_CONFIG.importHistoryApiUrl, {
+  // Re-pulls every bit of this event's server data and re-ingests it, without
+  // a full page reload — called on every tab selection (see buildTabs()) so
+  // a scheduled/manual import, or another officer's edit, that landed after
+  // this page opened shows up right away on whichever tab you're looking at.
+  // refresh.php returns exactly what vettefest_boot_data() (lib.php) assembles
+  // — the same thing index.php's own boot script ingests at page load — so
+  // this must re-ingest in that SAME order (see that function's own comment
+  // for why: deletedRegistrations/registrationOverrides each have to land
+  // before ingestRows, which triggers the CSV-driven regenerate() logic that
+  // reads them). Silent on failure — the page just keeps showing whatever it
+  // already had rather than surfacing an error for a background refresh
+  // nobody explicitly asked to retry.
+  function refreshShowData() {
+    if (!state.currentShow || !SITE_CONFIG.refreshApiUrl) return;
+    fetch(SITE_CONFIG.refreshApiUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "list" })
+      body: JSON.stringify({})
     }).then(function (res) { return res.json().then(function (data) { return { ok: res.ok, data: data }; }); })
       .then(function (r) {
-        if (r.ok && r.data && r.data.ok && Array.isArray(r.data.history)) {
-          state.importHistory = r.data.history;
-          if (state.tab === "history") renderViews();
+        if (!r.ok || !r.data || !r.data.ok) return;
+        var d = r.data;
+        API.ingestAppSettings(d.appSettings);
+        API.ingestFlyer(d.flyer);
+        API.ingestImportHistory(d.importHistory);
+        API.ingestDeletedRegistrations(d.deletedRegistrations);
+        API.ingestRegistrationOverrides(d.registrationOverrides);
+        if (d.hasRegistrations) {
+          var regRows = Papa.parse(d.regCsv, { header: true, skipEmptyLines: true }).data;
+          var actRows = d.actCsv ? Papa.parse(d.actCsv, { header: true, skipEmptyLines: true }).data : [];
+          API.ingestRows(regRows, actRows, new Date(d.generatedAt));
         }
+        renderViews();
       }).catch(function () { /* keep showing whatever's already loaded */ });
   }
 

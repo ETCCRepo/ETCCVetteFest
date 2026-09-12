@@ -50,7 +50,7 @@
     // regRows, actRows, source, eventUrl, outcome, error, logFile }) in FILE
     // order (oldest first); buildHistoryView() reverses it for display. Filled
     // by ingestImportHistory() from index.php's boot script and refreshed by
-    // loadImportHistory() on each History-tab select. Recorded server-side at
+    // refreshShowData() on every tab select. Recorded server-side at
     // import time (see vettefest_record_import_history() in lib.php and
     // import-schedule.php's mark_run for failures), not client-side, so it
     // stays accurate regardless of which import path an officer used.
@@ -368,12 +368,14 @@
       t.addEventListener("click", function () {
         state.tab = id;
         renderViews();
-        // Both tabs show server-side state that a scheduled/manual import can
-        // change after this page was opened, so re-pull it on select rather
-        // than only at page load — otherwise an officer has to reload to see
-        // whether last night's run actually happened.
+        // Every tab re-pulls the event's data on selection — a scheduled or
+        // manual import (or another officer's edit) that landed after this
+        // page was opened should show up without a full reload, on whichever
+        // tab you're looking at, not just History/Setup.
+        refreshShowData();
+        // Setup tab additionally needs the persisted "Last run" status,
+        // which isn't part of the general event-data refresh above.
         if (id === "setup") loadRunStatus();
-        if (id === "history") loadImportHistory();
       });
       return t;
     };
@@ -762,8 +764,16 @@
       htr.appendChild(th);
     });
     thead.appendChild(htr);
-    var table = el("table", { class: "grid" }, [thead, el("tbody", { id: "regbody" })]);
-    var wrap = el("div", { class: "tablewrap", style: "zoom:" + state.zoom }, [table]);
+    // zoom goes on the TABLE, never on .tablewrap. `zoom` rescales the
+    // element's own lengths, so a zoomed .tablewrap renders its max-height at
+    // zoom x the authored value — at the ~60% fit-zoom this picks on a wide
+    // screen that silently cut the visible table (and the row count with it)
+    // to 60% of what the CSS asked for, differently on every screen width.
+    // See updatePinnedOffsets()'s note: this is the same "zoom rescales
+    // lengths" trap. .tablewrap.fill (styles.css) is what actually makes the
+    // table fill the remaining viewport, on desktop and iPad alike.
+    var table = el("table", { class: "grid", style: "zoom:" + state.zoom }, [thead, el("tbody", { id: "regbody" })]);
+    var wrap = el("div", { class: "tablewrap fill" }, [table]);
     setTimeout(function () {
       renderRegBody();
       if (!state.zoomAutoFitDone) { state.zoomAutoFitDone = true; fitZoom(); }
@@ -804,15 +814,17 @@
   // Measure how wide the table naturally wants to be vs. how much room is
   // actually available, and pick a zoom level that makes every column fit —
   // instead of making the user guess a percentage via the +/− buttons.
+  // The zoom lives on the table (see buildRegView), so measure and restore it
+  // there — .tablewrap itself is never zoomed.
   function fitZoom() {
     var wrap = $(".tablewrap");
     var table = wrap && wrap.querySelector("table.grid");
     if (!wrap || !table) return;
-    var availableWidth = wrap.parentElement.clientWidth; // not itself zoomed
-    var priorZoom = wrap.style.zoom;
-    wrap.style.zoom = "1"; // measure at true scale, independent of current zoom
+    var availableWidth = wrap.clientWidth; // the unzoomed scroll container
+    var priorZoom = table.style.zoom;
+    table.style.zoom = "1"; // measure at true scale, independent of current zoom
     var naturalWidth = table.scrollWidth;
-    wrap.style.zoom = priorZoom;
+    table.style.zoom = priorZoom;
     if (!naturalWidth) return;
     setZoom(availableWidth / naturalWidth);
   }
@@ -2181,22 +2193,39 @@
       });
   }
 
-  // History tab — re-pull the log on each tab select, so an import that landed
-  // since this page was opened shows up without a full reload. Silent on
-  // failure: the page keeps showing whatever it already had rather than
-  // surfacing an error for a background refresh nobody asked to retry.
-  function loadImportHistory() {
-    if (!SITE_CONFIG.importHistoryApiUrl) return;
-    fetch(SITE_CONFIG.importHistoryApiUrl, {
+  // Re-pulls every bit of this event's server data and re-ingests it, without
+  // a full page reload — called on every tab selection (see buildTabs()) so
+  // a scheduled/manual import, or another officer's edit, that landed after
+  // this page opened shows up right away on whichever tab you're looking at.
+  // refresh.php returns exactly what vettefest_boot_data() (lib.php) assembles
+  // — the same thing index.php's own boot script ingests at page load — so
+  // this must re-ingest in that SAME order (see that function's own comment
+  // for why: deletedRegistrations/registrationOverrides each have to land
+  // before ingestRows, which triggers the CSV-driven regenerate() logic that
+  // reads them). Silent on failure — the page just keeps showing whatever it
+  // already had rather than surfacing an error for a background refresh
+  // nobody explicitly asked to retry.
+  function refreshShowData() {
+    if (!state.currentShow || !SITE_CONFIG.refreshApiUrl) return;
+    fetch(SITE_CONFIG.refreshApiUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "list" })
+      body: JSON.stringify({})
     }).then(function (res) { return res.json().then(function (data) { return { ok: res.ok, data: data }; }); })
       .then(function (r) {
-        if (r.ok && r.data && r.data.ok && Array.isArray(r.data.history)) {
-          state.importHistory = r.data.history;
-          if (state.tab === "history") renderViews();
+        if (!r.ok || !r.data || !r.data.ok) return;
+        var d = r.data;
+        API.ingestAppSettings(d.appSettings);
+        API.ingestFlyer(d.flyer);
+        API.ingestImportHistory(d.importHistory);
+        API.ingestDeletedRegistrations(d.deletedRegistrations);
+        API.ingestRegistrationOverrides(d.registrationOverrides);
+        if (d.hasRegistrations) {
+          var regRows = Papa.parse(d.regCsv, { header: true, skipEmptyLines: true }).data;
+          var actRows = d.actCsv ? Papa.parse(d.actCsv, { header: true, skipEmptyLines: true }).data : [];
+          API.ingestRows(regRows, actRows, new Date(d.generatedAt));
         }
+        renderViews();
       }).catch(function () { /* keep showing whatever's already loaded */ });
   }
 

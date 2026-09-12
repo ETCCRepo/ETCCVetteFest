@@ -122,7 +122,8 @@ $perShowUrls = [
     'flyerApiUrl' => 'flyer.php',
     'importScheduleApiUrl' => 'import-schedule.php',
     'importHistoryApiUrl' => 'import-history.php',
-    'logsApiUrl' => 'logs.php'
+    'logsApiUrl' => 'logs.php',
+    'refreshApiUrl' => 'refresh.php'
 ];
 $siteConfig = [];
 foreach ($perShowUrls as $key => $file) {
@@ -145,61 +146,46 @@ $bootParts[] = "    window.__vettefest.ingestShows(" .
 
 // With no event open the app renders the picker and nothing else, so there is
 // no point reading — or shipping to the browser — any event's data.
+// vettefest_boot_data() (lib.php) is the single source of truth for what gets
+// assembled here — refresh.php serializes the exact same call for the
+// "re-check this tab's data without a full reload" flow, so the two can never
+// quietly drift apart.
 if ($year !== null) {
+    $boot = vettefest_boot_data($year);
 
     // Per-event settings. Defaults come from lib.php, the same single source
     // app-settings.php and send-tshirt-order-email.php read.
-    $bootParts[] = "    window.__vettefest.ingestAppSettings(" .
-        vettefest_safe_inline_json(vettefest_read_settings($year)) . ");\n";
+    $bootParts[] = "    window.__vettefest.ingestAppSettings(" . vettefest_safe_inline_json($boot['appSettings']) . ");\n";
 
     // Event flyer METADATA only (mime/name/uploadedAt) — never the base64
     // bytes, which can be several MB. The Setup tab shows the "current flyer"
     // state from this; the Reports tab's Print Flyer fetches the actual file
     // from flyer.php on demand.
-    $flyerFile = vettefest_show_file($year, 'flyer.json');
-    $flyerRaw = ($flyerFile !== null && is_file($flyerFile)) ? json_decode(file_get_contents($flyerFile), true) : null;
-    $flyerMeta = (is_array($flyerRaw) && !empty($flyerRaw['dataB64']))
-        ? ['exists' => true, 'mime' => $flyerRaw['mime'] ?? 'application/octet-stream',
-           'name' => $flyerRaw['name'] ?? 'flyer', 'uploadedAt' => $flyerRaw['uploadedAt'] ?? null]
-        : ['exists' => false];
-    $bootParts[] = "    window.__vettefest.ingestFlyer(" . vettefest_safe_inline_json($flyerMeta) . ");\n";
+    $bootParts[] = "    window.__vettefest.ingestFlyer(" . vettefest_safe_inline_json($boot['flyer']) . ");\n";
 
     // The History tab's log — one entry per import attempt (the browser form,
     // upload-registrations.js, or a failed scheduled run recorded by
-    // import-schedule.php's mark_run). Shipped in FILE order (oldest first,
-    // i.e. append order); buildHistoryView() reverses it for display, matching
-    // the sibling CarShow app — don't sort here, or the view's reverse() would
-    // flip it back to oldest-first.
-    $importHistory = vettefest_read_json_list(vettefest_show_file($year, 'import-history.json'));
-    $bootParts[] = "    window.__vettefest.ingestImportHistory(" . vettefest_safe_inline_json($importHistory) . ");\n";
+    // import-schedule.php's mark_run).
+    $bootParts[] = "    window.__vettefest.ingestImportHistory(" . vettefest_safe_inline_json($boot['importHistory']) . ");\n";
 
     // MUST run before the ingestRows() call below — regenerate() (triggered
     // by ingestRows) excludes deleted keys from the freshly-parsed CSV the
     // moment it runs, not just after the fact.
-    $deletedKeys = vettefest_read_json_list(vettefest_show_file($year, 'deleted-registrations.json'));
-    $bootParts[] = "    window.__vettefest.ingestDeletedRegistrations(" . vettefest_safe_inline_json($deletedKeys) . ");\n";
+    $bootParts[] = "    window.__vettefest.ingestDeletedRegistrations(" . vettefest_safe_inline_json($boot['deletedRegistrations']) . ");\n";
 
     // Same ordering requirement — regenerate() applies these field-edit
     // patches to the freshly-parsed rows immediately.
-    $overridesFile = vettefest_show_file($year, 'registration-overrides.json');
-    $overridesRaw = is_file($overridesFile) ? json_decode(file_get_contents($overridesFile), true) : [];
-    $overrides = is_array($overridesRaw) ? $overridesRaw : [];
-    $bootParts[] = "    window.__vettefest.ingestRegistrationOverrides(" . vettefest_safe_inline_json($overrides) . ");\n";
+    $bootParts[] = "    window.__vettefest.ingestRegistrationOverrides(" . vettefest_safe_inline_json($boot['registrationOverrides']) . ");\n";
 
-    $regFile = vettefest_show_file($year, 'registrations-data.json');
-    if (is_file($regFile)) {
-        $reg = json_decode(file_get_contents($regFile), true);
-        if (is_array($reg) && !empty($reg['regCsv'])) {
-            $bootParts[] =
-                "    var REG_CSV = " . vettefest_safe_inline_json($reg['regCsv']) . ";\n" .
-                "    var ACT_CSV = " . vettefest_safe_inline_json($reg['actCsv'] ?? '') . ";\n" .
-                "    var GENERATED_AT = new Date(" . (int)($reg['generatedAt'] ?? 0) . ");\n" .
-                "    var regRows = Papa.parse(REG_CSV, { header: true, skipEmptyLines: true }).data;\n" .
-                "    var actRows = ACT_CSV ? Papa.parse(ACT_CSV, { header: true, skipEmptyLines: true }).data : [];\n" .
-                "    window.__vettefest.ingestRows(regRows, actRows, GENERATED_AT);\n";
-        }
+    if ($boot['hasRegistrations']) {
+        $bootParts[] =
+            "    var REG_CSV = " . vettefest_safe_inline_json($boot['regCsv']) . ";\n" .
+            "    var ACT_CSV = " . vettefest_safe_inline_json($boot['actCsv']) . ";\n" .
+            "    var GENERATED_AT = new Date(" . (int)$boot['generatedAt'] . ");\n" .
+            "    var regRows = Papa.parse(REG_CSV, { header: true, skipEmptyLines: true }).data;\n" .
+            "    var actRows = ACT_CSV ? Papa.parse(ACT_CSV, { header: true, skipEmptyLines: true }).data : [];\n" .
+            "    window.__vettefest.ingestRows(regRows, actRows, GENERATED_AT);\n";
     }
-
 }
 
 $bootScript = "\n<script>\n(function(){\n  function boot(){\n" . implode('', $bootParts) .

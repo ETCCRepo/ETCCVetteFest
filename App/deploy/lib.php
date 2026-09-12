@@ -385,6 +385,53 @@ function vettefest_read_settings($year) {
     return array_merge($defaults, is_array($raw) ? $raw : []);
 }
 
+// Everything one event's page load needs, in one place. index.php's boot
+// script and refresh.php's "re-check this tab's data without a full reload"
+// endpoint both call this — so the two can never quietly drift apart the way
+// two hand-maintained copies of the same set of file reads eventually would.
+// Ported from the sibling CarShow app's carshow_boot_data() — keep the two in
+// sync structurally; the actual per-event file set differs (no sponsors/
+// walk-ins/dash-numbers here, but a flyer, which CarShow doesn't have).
+function vettefest_boot_data($year) {
+    $flyerFile = vettefest_show_file($year, 'flyer.json');
+    $flyerRaw = ($flyerFile !== null && is_file($flyerFile)) ? json_decode(file_get_contents($flyerFile), true) : null;
+    $flyerMeta = (is_array($flyerRaw) && !empty($flyerRaw['dataB64']))
+        ? ['exists' => true, 'mime' => $flyerRaw['mime'] ?? 'application/octet-stream',
+           'name' => $flyerRaw['name'] ?? 'flyer', 'uploadedAt' => $flyerRaw['uploadedAt'] ?? null]
+        : ['exists' => false];
+
+    $overridesFile = vettefest_show_file($year, 'registration-overrides.json');
+    $overridesRaw = is_file($overridesFile) ? json_decode(file_get_contents($overridesFile), true) : [];
+
+    $data = [
+        'appSettings' => vettefest_read_settings($year),
+        'flyer' => $flyerMeta,
+        // Shipped in FILE order (oldest first, i.e. append order);
+        // buildHistoryView() reverses it for display — don't sort here, or
+        // that reverse() would flip it back to oldest-first.
+        'importHistory' => vettefest_read_json_list(vettefest_show_file($year, 'import-history.json')),
+        'deletedRegistrations' => vettefest_read_json_list(vettefest_show_file($year, 'deleted-registrations.json')),
+        'registrationOverrides' => is_array($overridesRaw) ? $overridesRaw : [],
+        'regCsv' => '',
+        'actCsv' => '',
+        'generatedAt' => 0,
+        'hasRegistrations' => false,
+    ];
+
+    $regFile = vettefest_show_file($year, 'registrations-data.json');
+    if (is_file($regFile)) {
+        $reg = json_decode(file_get_contents($regFile), true);
+        if (is_array($reg) && !empty($reg['regCsv'])) {
+            $data['regCsv'] = (string)$reg['regCsv'];
+            $data['actCsv'] = (string)($reg['actCsv'] ?? '');
+            $data['generatedAt'] = (int)($reg['generatedAt'] ?? 0);
+            $data['hasRegistrations'] = true;
+        }
+    }
+
+    return $data;
+}
+
 // ---------------------------------------------------------------------------
 // The per-event data files
 // ---------------------------------------------------------------------------

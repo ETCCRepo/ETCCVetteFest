@@ -111,7 +111,51 @@ footer.app-footer .footer-credit { font-size: 10px; margin-top: 4px; }
 .zoomgroup .count { min-width: 38px; text-align: center; }
 
 /* table */
+/* The calc() here is a FALLBACK only — a rough guess at the chrome above the
+   table, used by the History tab's short log table and by any browser
+   without :has() support. The Registration table (marked .fill) gets the
+   real treatment below: the app shell becomes a fixed-height flex column and
+   the table takes exactly whatever viewport is left over, so there's no
+   magic number to be wrong about on a given device.
+   IMPORTANT: never put `zoom` on .tablewrap — zoom rescales the element's own
+   lengths, so a zoomed wrap renders its height at zoom x the authored value
+   (this is what shrank the Registration table to ~60% of its intended height
+   on desktop and iPad). The zoom belongs on the inner <table>; see
+   buildRegView() in app.js. */
 .tablewrap { overflow: auto; max-height: calc(100vh - 250px); border: 1px solid var(--line); border-radius: 10px; background: #fff; }
+
+/* Full-height Registration table. Screen only — print has its own .tablewrap
+   rules further down, and a fixed-height/overflow-hidden body would clip a
+   printed report to one page.
+   The whole point: no device-specific guess. body becomes a 100dvh flex
+   column; header, tabs, toolbar and footer take their natural heights; the
+   table gets `flex: 1` — literally "whatever is left". A taller toolbar or a
+   collapsing iPad browser bar just changes what's left over, with no JS and
+   no feedback loop (a JS attempt that measures the footer's position to size
+   the table is circular — the footer sits BELOW the table, so its position
+   depends on the height being computed, which can collapse the table
+   progressively on some devices). Flex has no such circularity: the browser
+   solves it in one pass. Browsers without :has() simply keep the calc()
+   fallback above. */
+@media screen {
+  body:has(.tablewrap.fill) {
+    height: 100vh; height: 100dvh;
+    display: flex; flex-direction: column; overflow: hidden;
+  }
+  body:has(.tablewrap.fill) .wrap {
+    flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column;
+    padding-bottom: 16px; /* the usual 60px is for page-scroll breathing room */
+  }
+  body:has(.tablewrap.fill) #app,
+  body:has(.tablewrap.fill) #app > .view {
+    flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column;
+  }
+  /* min-height keeps a few rows visible rather than collapsing to nothing on
+     a very short window; below that the shell just clips, same as any
+     too-small viewport. */
+  .tablewrap.fill { flex: 1 1 auto; min-height: 200px; max-height: none; }
+}
+
 table.grid { border-collapse: separate; border-spacing: 0; width: 100%; font-size: 13px; }
 table.grid th, table.grid td { padding: 6px 9px; border-bottom: 1px solid var(--line); white-space: nowrap; text-align: left; vertical-align: middle; }
 /* Without this, a checkbox's intrinsic box (Sponsors tab's row-select column)
