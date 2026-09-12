@@ -8,6 +8,8 @@ popup form, postback replay) — see "This session's work (2026-09-12 — third 
 Shipped v2.28 (`c6d9bbe`), installer `25b43c5`, checkpoints v2.29 (`3d2d7cf`) and v2.30
 (`17feee8`, bump-only).
 Then CarShow's port of the sync fed four fixes back here — v2.31 (`f97d1d7`).
+Last: the registration detail form's action buttons were pinned to the top — v2.32
+(`87dafae`), checkpoint v2.33 (`b2df0de`).
 
 Previous update: 2026-09-12 (end of a second session that day). **The app footer was
 collapsed to a single auto-shrinking line** (v2.27, `ffb776c`), this file was brought back
@@ -84,11 +86,11 @@ automated coverage — all of it was verified by hand against the live 2026 even
 (see the session entries below). The count stays at 85 because none of that work touched
 `logic.js`.
 
-**Version:** `App/version.json` — stamped **2.31** in the currently-live
+**Version:** `App/version.json` — stamped **2.33** in the currently-live
 `App/ETCCVetteFest.html` / `app-bundle.html` on the server (built and deployed 2026-09-12
-16:34, commit `f97d1d7`). The file itself now reads `{major:2, minor:32}`, since
+16:48, checkpoint commit `b2df0de`). The file itself now reads `{major:2, minor:34}`, since
 `build.js` bumps-and-stores the *next* version on every run — the next build will stamp
-"2.32". **Gaps in the version sequence are normal, not lost work:** `build.js` bumps on
+"2.34". **Gaps in the version sequence are normal, not lost work:** `build.js` bumps on
 *every* run, including rebuilds that were never committed or deployed, which is why the
 shipped history reads 2.11, 2.12, 2.13, 2.15, 2.17, 2.18, 2.20, 2.22, 2.23, 2.27.
 
@@ -167,6 +169,20 @@ copy.
 **Git: pushed and working**, as of 2026-08-27 — see that session's entry below for the
 one gotcha (a global credential helper that must be worked around on every push from this
 machine).
+
+## This session's work (2026-09-12 — fifth session: detail form buttons)
+
+User request (with a screenshot of the Registration detail modal): "move button to top of
+form and pin". In `renderDetailModal()` (`App/src/app.js`) the **Save / Cancel / Revert to
+CSV / Delete** row moved from the bottom of `.modal-body` to a `.detail-actions` bar
+directly under `.modal-head`; both are wrapped in a new `.modal-pinned` block that is
+`position: sticky; top: 0` inside the scrolling `.modal` (the inner head's own sticky is
+turned off so the two move as one). The save/revert error (`state.detailEditError`) moved
+into the same pinned block. CSS is scoped to the new classes, so every other modal is
+unchanged. Verified locally with fixture data at a 1280×800 viewport: after scrolling a
+record to the bottom the pinned block stays at offset 0. (A first measurement read -254px
+only because the hidden preview pane gave the modal 0px height — not a real failure.)
+Shipped **v2.32 (`87dafae`)**, then checkpoint **v2.33 (`b2df0de`)**. Tests 85/85.
 
 ## This session's work (2026-09-12 — fourth session: CarShow port-back)
 
