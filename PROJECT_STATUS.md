@@ -1,13 +1,21 @@
 # ETCC Vette Fest App — Project Status
 
-Last updated: 2026-09-12 (end of session). **Setup and History were brought to full
-CarShow parity and the ClubExpress import loop was automated end to end** — an Import
-Schedule panel on Setup, a `vettefest-sync-registrations` Windows scheduled task polling
-it every 15 minutes, hourly auto-import enabled on the live 2026 event, and a History tab
-that logs every import (success or failure). Two CarShow bug fixes were also ported (the
+Last updated: 2026-09-12 (end of a second session that day). **The app footer was
+collapsed to a single auto-shrinking line** (v2.27, `ffb776c`), this file was brought back
+in sync with the code after two undocumented days (`4343e9d`), and a **correction** was
+recorded: the live auto-import schedule is *not* the enabled-hourly-unbounded one the
+commits describe — see "This session's work (2026-09-12 — later session)" below.
+
+Previous update: 2026-09-12 (end of the earlier session that day). **Setup and History
+were brought to full CarShow parity and the ClubExpress import loop was automated end to
+end** — an Import Schedule panel on Setup, a `vettefest-sync-registrations` Windows
+scheduled task polling it every 15 minutes, an auto-import schedule wired up on the live
+2026 event (see the correction in the later session's §2), and a History tab that logs
+every import (success or failure). Two CarShow bug fixes were also ported (the
 Registration table under-filling the viewport; tabs not re-pulling server data on
 selection). Shipped across **v2.11 → v2.23**, nine commits, all built, deployed and
-pushed. See "This session's work (2026-09-12)" and "(2026-09-11)" below.
+pushed. See "This session's work (2026-09-12 — earlier session)" and "(2026-09-11)"
+below.
 
 > **How those two entries were written — read this before trusting their detail.** The
 > 09-11 and 09-12 sessions both ended without running `/ETCCVetteFestEnd`, so this file sat
@@ -67,13 +75,13 @@ automated coverage — all of it was verified by hand against the live 2026 even
 (see the session entries below). The count stays at 85 because none of that work touched
 `logic.js`.
 
-**Version:** `App/version.json` — stamped **2.23** in the currently-live
+**Version:** `App/version.json` — stamped **2.27** in the currently-live
 `App/ETCCVetteFest.html` / `app-bundle.html` on the server (built and deployed 2026-09-12
-13:05, commit `ba448cb`). The file itself now reads `{major:2, minor:24}`, since
+13:33, commit `ffb776c`). The file itself now reads `{major:2, minor:28}`, since
 `build.js` bumps-and-stores the *next* version on every run — the next build will stamp
-"2.24". **Gaps in the version sequence are normal, not lost work:** `build.js` bumps on
+"2.28". **Gaps in the version sequence are normal, not lost work:** `build.js` bumps on
 *every* run, including rebuilds that were never committed or deployed, which is why the
-shipped history reads 2.11, 2.12, 2.13, 2.15, 2.17, 2.18, 2.20, 2.22, 2.23.
+shipped history reads 2.11, 2.12, 2.13, 2.15, 2.17, 2.18, 2.20, 2.22, 2.23, 2.27.
 
 **Live URL:** https://etccapps.com/apps/vettefest/ — as of 2026-09-09, **the Developer
 password is the same as the site password** (`$DEV_PASSWORD_HASH` in `secrets.php` was set
@@ -151,11 +159,92 @@ copy.
 one gotcha (a global credential helper that must be worked around on every push from this
 machine).
 
-## This session's work (2026-09-12)
+## This session's work (2026-09-12 — later session)
+
+A short session with three outcomes: this document was brought back in sync with the code,
+a long-standing claim about the live auto-import schedule turned out to be **wrong** and is
+corrected below, and the app footer was collapsed to a single auto-shrinking line and
+shipped as **v2.27** (`ffb776c`).
+
+### 1. This document was two days stale; catching it up (`4343e9d`)
+
+The 09-11 and earlier-09-12 sessions both ended without running `/ETCCVetteFestEnd`, so this
+file still described a v2.8 app with no History tab, no Import Schedule and no import
+automation. The two entries below it were reconstructed from `0cb6398..ba448cb` and
+committed as `4343e9d`. See the note at the top of this file about what that reconstruction
+can and cannot be trusted for.
+
+### 2. CORRECTION: the live auto-import schedule is not what the commits say
+
+The earlier-09-12 entry (§5) and commit `d08f13e` both state that auto-import was enabled on
+the live 2026 event at `autoImportIntervalHours = 1` with no date bounds. **That is not what
+the server holds.** Read directly from `app-settings.php` on 2026-09-12:
+
+```
+autoImportEnabled:        false
+autoImportIntervalHours:  0
+autoImportTimes:          []
+autoImportStartDate:      2026-09-12
+autoImportEndDate:        2026-09-20
+```
+
+So auto-import is **off**, and a date window **already exists**. Something changed the
+settings after `d08f13e` — through the Setup tab, most likely — and because this setting
+lives only in `data/2026/app-settings.json` on the host, nothing in git records it. The
+import history bears the correction out: it holds a single row (17:00:49 UTC, 74 reg / 108
+activity, source `cli`, success), not the repeated hourly runs an enabled interval would
+have produced.
+
+**The lesson, worth keeping:** any claim in this file about live per-event settings is a
+snapshot that can be falsified by an officer clicking Save. Read `app-settings.php` before
+acting on one. The endpoint's `save` action merges, so a read-modify-write of one key is
+safe — but it merges against whatever is on disk at that instant, so a browser Save landing
+afterwards silently wins.
+
+### 3. Footer collapsed to one auto-shrinking line (`ffb776c`, v2.27)
+
+The footer was three stacked `<div>`s — version/deploy stamp, the Business Web Express
+credit, the ETCC copyright. It is now **one row**, the three segments separated by the same
+`&middot;` already used inside them. Defined in `App/build.js` (the only place the footer
+exists; `ETCCVetteFest.html` is generated), styled in `App/src/styles.css`.
+
+It **scales to fit rather than wrapping**. The line measures ~103px of width per 1px of
+font-size, so `font-size: min(12px, calc(0.96vw - 0.4px))` sits just under the size that
+fills the viewport minus the footer's 20px side padding. `min()` caps it at the existing
+12px base so it never grows on a wide monitor, and there is **deliberately no lower bound**
+— at 375px it renders around 3px rather than breaking onto a second line.
+
+**A rejected first attempt, so nobody re-adds it:** the original fix used
+`clamp(9px, …, 12px)` plus a `@media (max-width: 960px)` rule that restored wrapping. That
+looked reasonable but defeated the entire request on any narrow window — including the
+in-app preview pane at 800px, which is where it was caught. If a readable floor is ever
+wanted back, it necessarily costs the single line on small screens; that trade was made
+deliberately in favour of the line.
+
+Each segment stays in its own `<span>` (`display: inline-block`), which keeps a break — if
+one ever happens — off the middle of an email address. The old `.footer-credit` rule is
+gone; it existed only to make lines 2 and 3 smaller than line 1.
+
+Also: the Business Web Express link changed from `mailto:info@businesswebexpress.com` to
+`https://businesswebexpress.com` (`target="_blank" rel="noopener"`), because the visible
+text is now the bare domain and a domain that opens a mail client reads as a bug. The
+ETCC address below it is still a `mailto:`.
+
+Verified in the browser at 1600 / 1280 / 1100 / 980 / 800 / 500 / 375px: one row at every
+width, no horizontal overflow, and at 375px the line measures exactly the 335px available.
+The regression suite was not run — it is logic-only and this change touches neither
+`logic.js` nor anything it covers.
+
+**Note on the version numbers:** v2.25 was built and deployed mid-session with an earlier,
+still-wrapping version of this footer, then superseded by v2.27 before anything was
+committed. v2.25 and v2.26 exist only as build stamps; v2.27 is what is live and committed.
+
+## This session's work (2026-09-12 — earlier session)
 
 **Theme: close the loop on imports.** The Setup and History tabs were finished to CarShow
-parity, a real Windows scheduled task was stood up to drive them, and hourly auto-import
-was switched on for the live 2026 event. Seven commits, `7124453` → `ba448cb`, v2.13
+parity, a real Windows scheduled task was stood up to drive them, and an auto-import
+schedule was configured on the live 2026 event (§5 — later contradicted by the server
+itself). Seven commits, `7124453` → `ba448cb`, v2.13
 through v2.23, all deployed and pushed.
 
 ### 1. Setup + History brought to CarShow parity (`7124453`, v2.13)
@@ -261,12 +350,18 @@ into state.
 
 ### 5. Live config change, in no diff anywhere
 
-**Auto-import was enabled on the live 2026 event**: `autoImportIntervalHours = 1`, matching
-the sibling CarShow app's live schedule. `autoImportTimes` and the date range were
-deliberately left **unbounded** rather than copying CarShow's own event-specific date
-window. Applied directly through `app-settings.php` against the live server, so it exists
-only in `data/2026/app-settings.json` on the host — it is not in git, and a fresh install
-will not have it. See follow-up #7 for the consequence.
+> **⚠ Superseded — do not act on this paragraph.** A direct read of the live server later
+> the same day showed auto-import **disabled**, with a date window already set. See
+> "This session's work (2026-09-12 — later session)" §2 for the actual values. The
+> paragraph is kept because it is what commit `d08f13e` claims, and the gap between the two
+> is itself the thing to know.
+
+What `d08f13e` recorded: **auto-import enabled on the live 2026 event** at
+`autoImportIntervalHours = 1`, matching the sibling CarShow app's live schedule, with
+`autoImportTimes` and the date range deliberately left **unbounded** rather than copying
+CarShow's own event-specific date window. Applied directly through `app-settings.php`
+against the live server, so it exists only in `data/2026/app-settings.json` on the host —
+not in git, and a fresh install will not have it.
 
 ## This session's work (2026-09-11)
 
@@ -669,12 +764,16 @@ having the token; see that section and "Known follow-ups" for the exact command.
    confirming the env var still reaches the task's process (that exact check is what
    `ba448cb` recorded). The task's own health is visible only in Claude Code → Scheduled
    Tasks → Runs, never in the app — by design, see the 2026-09-12 entry §3.
-7. **Auto-import on the 2026 event is enabled with no end date.** It runs hourly
-   (`autoImportIntervalHours = 1`) with `autoImportStartDate` / `autoImportEndDate` left
-   empty, so it will keep polling ClubExpress indefinitely after the event is over.
-   Someone should either set an end date or switch `autoImportEnabled` off once the 2026
-   event closes. This setting lives only in `data/2026/app-settings.json` on the server —
-   it is in no diff and no backup here.
+7. **Auto-import on the 2026 event is currently OFF, and the end date is unsettled.** As
+   read from the live server on 2026-09-12: `autoImportEnabled: false`,
+   `autoImportIntervalHours: 0`, `autoImportTimes: []`, `autoImportStartDate: 2026-09-12`,
+   `autoImportEndDate: 2026-09-20`. **Open item:** the user asked for an end date other
+   than 2026-09-20 but had not supplied one when the session ended, and chose to leave
+   auto-import disabled for now — so the end date is inert until someone re-enables the
+   schedule. The comparison is inclusive (`$today <= $endDate`, Eastern, per
+   `import-schedule.php`), and a manual "Import Now" bypasses both the window and the
+   enabled flag. This setting lives only in `data/2026/app-settings.json` on the server —
+   it is in no diff and no backup here, so **read it before quoting it.**
 8. **No UI has automated coverage.** The regression suite is logic-only, so the Setup tab,
    Import Schedule, History tab, flyer feature, and the whole scheduled-task handshake were
    all verified by hand against the live 2026 event and nothing guards them against
