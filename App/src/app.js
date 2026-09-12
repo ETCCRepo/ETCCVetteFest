@@ -34,7 +34,6 @@
     showsError: null,     // last shows.php failure, shown on the picker
     showsBusy: false,     // a shows.php call is in flight
     showPendingDelete: null, // event awaiting delete confirmation, or null
-    importInstructionsOpen: false, // Setup tab's "how do I get these files from ClubExpress" modal
 
     tab: "sum",
     detailRow: null,  // registration row currently shown in the detail modal, or null
@@ -613,46 +612,6 @@
     backdrop.addEventListener("click", cancelDeleteShow);
     host.appendChild(backdrop);
     pw.focus();
-  }
-
-  // The exact steps registrations-import.php's own "?" button shows —
-  // duplicated there in plain HTML/CSS (no shared JS module between a static
-  // PHP page and this bundle) rather than referenced, so both must be edited
-  // together if ClubExpress ever changes this flow.
-  function openImportInstructions() { state.importInstructionsOpen = true; renderImportInstructions(); }
-  function closeImportInstructions() { state.importInstructionsOpen = false; renderImportInstructions(); }
-  function renderImportInstructions() {
-    var host = $("#confirmHost");
-    if (!host) return;
-    host.innerHTML = "";
-    if (!state.importInstructionsOpen) return;
-
-    var closeBtn = el("button", { class: "btn" }, ["✕"]);
-    closeBtn.addEventListener("click", closeImportInstructions);
-    var head = el("div", { class: "modal-head" }, [
-      el("h3", { text: "Getting the two files from ClubExpress" }),
-      el("span", { class: "spacer" }),
-      closeBtn
-    ]);
-
-    var steps = [
-      "Select the Event", "Admin Options", "Exports", "Registration Data", "Export",
-      "Save as registration_data.csv", "Exports", "Activity Registrant Data", "Export",
-      "Save as activity_registrant_data.csv"
-    ];
-    var body = el("div", { class: "modal-body" }, [
-      el("p", {}, ["Do this twice — once for each export below — then upload both files on the Import Registrations screen."]),
-      el("ol", { style: "margin:0; padding-left:22px; line-height:1.7" }, steps.map(function (s) { return el("li", { text: s }); })),
-      el("div", { class: "settings-actions", style: "margin-top:14px" }, [
-        (function () { var b = el("button", { class: "btn primary" }, ["Got it"]); b.addEventListener("click", closeImportInstructions); return b; })()
-      ])
-    ]);
-
-    var modal = el("div", { class: "modal" }, [head, body]);
-    modal.addEventListener("click", function (e) { e.stopPropagation(); });
-    var backdrop = el("div", { class: "modal-backdrop" }, [modal]);
-    backdrop.addEventListener("click", closeImportInstructions);
-    host.appendChild(backdrop);
   }
 
   // CSVs are (re)ingested synchronously right before regenerate() runs, so
@@ -1735,18 +1694,13 @@
   //   - Import Flyer — the event's marketing flyer (image or PDF), uploaded
   //     straight to flyer.php here and then printable from the Reports tab.
   //   - Import Schedule — the ClubExpress Event URL, an "Import Now" button,
-  //     the auto-import schedule, the archived run logs, and (as its Manual
-  //     subsection) the by-hand registrations-import.php upload form.
+  //     the auto-import schedule, and the archived run logs. The by-hand
+  //     registrations-import.php upload form used to be linked here too (a
+  //     "Manual" subsection) but was removed at the user's request — Import
+  //     Now covers that case now. The page itself is untouched and still
+  //     reachable directly if anyone bookmarked it.
   // Every server endpoint here is session-gated (you're already logged in to
   // see this), so the tab itself carries no extra password.
-
-  // A launcher link (opens its standalone PHP page in a new tab) with a hint
-  // line, optionally paired with an extra button (e.g. "❓ Instructions").
-  function buildSetupLauncher(href, label, hint, extraBtn) {
-    var link = el("a", { class: "btn", href: href, target: "_blank", rel: "noopener" }, [label]);
-    var linkRow = extraBtn ? el("div", { style: "display:flex; align-items:center; gap:8px" }, [link, extraBtn]) : link;
-    return el("div", { class: "setup-item" }, [linkRow, el("div", { class: "setup-hint", text: hint })]);
-  }
 
   function buildSetupView() {
     var wrap = el("div", { class: "view setup-view" });
@@ -1934,19 +1888,6 @@
     else if (state.importScheduleSaved) saveStatus.push(el("span", { class: "count", style: "color:var(--good)" }, ["Saved."]));
     if (state.importScheduleError) saveStatus.push(el("div", { class: "form-error" }, [state.importScheduleError]));
 
-    // Manual subsection — the browser-upload alternative to Import Now: pick
-    // the two CSVs by hand when Import Now/the schedule isn't available or
-    // convenient (e.g. the automation machine is off, or an officer already
-    // has the files and doesn't want to wait for a poll).
-    var instructionsBtn = el("button", { class: "btn", type: "button", title: "How to export these CSVs from ClubExpress" }, ["❓ Instructions"]);
-    instructionsBtn.addEventListener("click", openImportInstructions);
-    var manualHint = "Upload the ClubExpress registration + activity CSV export for this event, by hand, right now." +
-      (state.result && state.result.meta ? "  Current data loaded: " + fmtDate(state.result.meta.generatedAt) + "." : "  Nothing imported for this event yet.");
-    var manualSection = el("div", { style: "margin-top:18px; padding-top:14px; border-top:1px solid var(--line)" }, [
-      el("h4", { text: "Manual", style: "margin:0 0 8px" }),
-      buildSetupLauncher("registrations-import.php", "📋 Import Registrations", manualHint, instructionsBtn)
-    ]);
-
     return el("div", { class: "panel", style: "margin-top:16px" }, [
       el("h3", { text: "Import Schedule" }),
       el("div", { class: "hint", style: "margin-bottom:10px" }, [
@@ -1981,8 +1922,7 @@
           el("div", { class: "setup-hint" }, ["Runs alongside any Times above, not instead of them."])
         ])
       ]),
-      el("div", { class: "settings-actions" }, [saveBtn].concat(saveStatus)),
-      manualSection
+      el("div", { class: "settings-actions" }, [saveBtn].concat(saveStatus))
     ]);
   }
 
@@ -2998,7 +2938,6 @@
       if (state.changelogOpen) { closeChangelog(); return; }
       if (state.tshirtOrderPageOpen) { closeTshirtOrderPage(); return; }
       if (state.showPendingDelete) { cancelDeleteShow(); return; }
-      if (state.importInstructionsOpen) { closeImportInstructions(); return; }
       if (state.deleteHistoryConfirm) { closeDeleteHistoryConfirm(); return; }
       if (state.deleteRegSelectedOpen) { closeDeleteRegSelectedConfirm(); return; }
       if (state.menuOpen) { closeMenu(); return; }

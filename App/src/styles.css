@@ -290,11 +290,8 @@ th.pinned { z-index: 3; }
 /* Import Schedule's own rows keep the label/field side-by-side layout the
    Settings modal uses, overriding the block rule above. */
 .setup-view .panel .form-row.sched { display: flex; align-items: flex-start; gap: 10px; }
-.setup-item { display: flex; flex-direction: column; gap: 4px; }
 .setup-hint { font-size: 12px; color: var(--muted); }
 .btn-sm { font-size: 12px; padding: 4px 10px; }
-.btn-warn { background: var(--warn); border-color: var(--red-dark); color: #fff; }
-.btn-warn:hover:not([disabled]) { background: var(--red-dark); }
 .btn-warn[disabled] { opacity: 0.5; cursor: default; }
 
 /* History tab — import log table */
