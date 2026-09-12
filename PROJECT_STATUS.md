@@ -1,6 +1,14 @@
 # ETCC Vette Fest App — Project Status
 
-Last updated: 2026-09-12 (end of a third session that day). **The ClubExpress import no
+Last updated: 2026-09-12 (end of a sixth session that day). **Deleted the stale
+`vettefest-sync-registrations` Claude Code scheduled task**, which had been left polling
+every 15 minutes alongside the Windows task that actually does the import — two pollers
+racing on the same read-only `check`. Confirmed in the process that the import pipeline
+itself has **no Claude dependency at all**. Checkpoint v2.34 (`bd7f70d`, build-artifact
+only; no source changed). Note: this document had already claimed that task was gone, and
+it had come back once — see that session's entry, §3.
+
+Previous update: 2026-09-12 (end of a third session that day). **The ClubExpress import no
 longer depends on Claude.** `deploy/sync-registrations.js` (Playwright) now does the whole
 unattended import, run by a Windows Task Scheduler task; the Claude Code scheduled task
 is gone. Getting it to work needed three live-site discoveries (host-only auth cookie,
@@ -86,11 +94,11 @@ automated coverage — all of it was verified by hand against the live 2026 even
 (see the session entries below). The count stays at 85 because none of that work touched
 `logic.js`.
 
-**Version:** `App/version.json` — stamped **2.33** in the currently-live
+**Version:** `App/version.json` — stamped **2.34** in the currently-live
 `App/ETCCVetteFest.html` / `app-bundle.html` on the server (built and deployed 2026-09-12
-16:48, checkpoint commit `b2df0de`). The file itself now reads `{major:2, minor:34}`, since
+17:00, checkpoint commit `bd7f70d`). The file itself now reads `{major:2, minor:35}`, since
 `build.js` bumps-and-stores the *next* version on every run — the next build will stamp
-"2.34". **Gaps in the version sequence are normal, not lost work:** `build.js` bumps on
+"2.35". **Gaps in the version sequence are normal, not lost work:** `build.js` bumps on
 *every* run, including rebuilds that were never committed or deployed, which is why the
 shipped history reads 2.11, 2.12, 2.13, 2.15, 2.17, 2.18, 2.20, 2.22, 2.23, 2.27.
 
@@ -169,6 +177,82 @@ copy.
 **Git: pushed and working**, as of 2026-08-27 — see that session's entry below for the
 one gotcha (a global credential helper that must be worked around on every push from this
 machine).
+
+## This session's work (2026-09-12 — sixth session: stale Claude task removed)
+
+No source changed. The session answered one question — *does the import depend on Claude
+running?* — and acted on what the answer turned up. Checkpoint v2.34 (`bd7f70d`,
+build-artifact-only).
+
+### 1. The answer, for the record
+
+**No.** `deploy/sync-registrations.js` (Playwright via `playwright-core`, through
+`clubexpress.js`) does the whole unattended import, fired by Windows Task Scheduler
+(`conhost.exe --headless node deploy/sync-registrations.js`, working dir `App/`, every 15
+minutes). No Claude, no subscription, no desktop app. What it *does* need is unchanged
+from follow-up #6: Node + `npm install`, the hand-logged-in ClubExpress Chrome profile
+(it never logs in itself), `VETTEFEST_SITE_PASSWORD`, and the task's Interactive principal
+being signed in.
+
+### 2. But a second, Claude-dependent poller was still live — now deleted
+
+The old **`vettefest-sync-registrations` Claude Code scheduled task** had never been
+deregistered. It was still enabled on `*/15 * * * *`, and its
+`~/.claude/scheduled-tasks/vettefest-sync-registrations/SKILL.md` (mtime 13:03) still
+described the superseded Claude-in-Chrome path — it predates the 15:22 rewrite and was
+never updated.
+
+That meant **two independent pollers** calling `import-schedule.php`'s `check`. That action
+is read-only: it reports `shouldRun` but does not claim the request (claiming happens later,
+at `mark_run`, via `handledAt` / `ranSlots`). So both pollers could see `shouldRun: true`
+for the same due slot and both run a full ClubExpress export and upload. They fired in the
+same second at 20:52:28. No duplicate pairs were found in the import history, so there is
+no evidence it actually double-imported — but the race was real, and in the meantime it
+spent a Claude session every 15 minutes on a no-op poll.
+
+**Deleted** via the scheduled-tasks tool; 9 run sessions archived. The list is now empty.
+The SKILL.md is deliberately left on disk so the prompt can be recovered.
+
+**The run log is the cleanest proof of why the Node path is the better one.** The Claude
+task fired at 16:36, 16:51, 16:57, 17:02, 17:20, 17:35 UTC — then **nothing until 20:52**,
+because Claude Code was not running. During that three-hour gap the Windows task completed
+three successful imports (19:22, 20:04, 20:34 UTC, 74 reg / 108 activity each). The
+Claude-driven poller was only ever as reliable as the app being open.
+
+### 3. ⚠ It had come back once already — worth re-checking
+
+This document (third-session entry) already stated "The Claude Code scheduled task list is
+empty (checked)", written around 16:04. Yet the task was registered, enabled and firing at
+20:52 — roughly 50 minutes after that check. **So something re-registered it once.** If it
+reappears again, that re-registration is the actual bug, not the leftover task. Check with
+the scheduled-tasks tool (or Claude Code's Scheduled Tasks pane); the Windows task is
+separate and is *not* what comes back.
+
+### 4. CarShow's Claude task also disappeared — not from this session's action
+
+Only the Vette Fest task ID was passed to the delete call, but afterwards the Claude
+scheduled-task list was empty for **both** apps. The likely explanation is the parallel
+`ETCC_CarShow_2` session doing the same cleanup (it was active at 20:58:51, about two
+minutes earlier) — but that could not be confirmed from here, so treat it as unattributed.
+No harm either way: both Windows tasks were verified intact and healthy immediately
+afterwards (`carshow-sync-registrations` and `vettefest-sync-registrations`, both
+State=Ready, LastTaskResult=0, next runs 5:12 PM and 5:05 PM). Both SKILL.md files remain
+on disk.
+
+### 5. A log tail that looks worse than it is
+
+`deploy/sync-registrations.local.log` ends with four consecutive `FAILED` lines (19:02–19:17
+UTC): session-not-logged-in, a `page.goto` undefined URL, and two export-dialog timeouts.
+**These predate the three successful imports that followed** and are from the third
+session's debugging window, not current breakage. The file is a debugging aid only — the
+authoritative per-run log goes to the server via `logs.php`, and no-op polls exit without
+writing anything, which is why the tail is older than the last success.
+
+### Checkpoint
+
+Build v2.34 → FTP deploy (app-bundle.html 1,359,353 bytes, all 20 PHP/asset files, `data/`
+and `secrets.php` untouched) → commit `bd7f70d` → pushed. Build-artifact-only; the
+regression suite was not run and nothing in it was touched.
 
 ## This session's work (2026-09-12 — fifth session: detail form buttons)
 
@@ -883,7 +967,14 @@ having the token; see that section and "Known follow-ups" for the exact command.
    `C:\Users\Admin\AppData\Local\ETCC\clubexpress-profile` (MEMBER_TOKEN valid to
    2027-10-17; **shared with the CarShow sync** since 2026-09-12). Poller health: Task Scheduler's Last Run Result (0 = fine); failures also
    append to `deploy/sync-registrations.local.log`. The `/ETCCVetteFestImportData` Claude
-   skill remains only as a manual fallback. If someone wants imports while signed out,
+   skill remains only as a manual fallback. **The Claude Code scheduled task that used to
+   drive it was deleted on 2026-09-12 (sixth session)** — it had been left polling every
+   15 minutes beside the Windows task, two pollers racing on a read-only `check`. Its
+   SKILL.md is still on disk at `~/.claude/scheduled-tasks/vettefest-sync-registrations/`
+   if the prompt is ever wanted back. **It has re-registered itself once already** (this
+   file claimed it gone at ~16:04; it was firing again by 20:52), so if a Claude scheduled
+   task named `vettefest-sync-registrations` reappears, the thing to fix is whatever
+   re-creates it — deleting it again only buys a few hours. If someone wants imports while signed out,
    re-run the installer **without** `-Interactive` from an elevated window of the **Admin**
    account itself — S4U was refused from both other contexts tried.
    **Fragility to know:** the export path depends on ClubExpress internals discovered on
