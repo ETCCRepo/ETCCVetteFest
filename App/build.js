@@ -98,9 +98,16 @@ var html =
 '  <div id="app"></div>\n' +
 '</div>\n' +
 '<footer class="app-footer">\n' +
-'  <div>v' + versionString + ' &middot; Deployed ' + fmtDateTime(deployedAt) + '</div>\n' +
-'  <div class="footer-credit">Website by Business Web Express &middot; <a href="mailto:info@businesswebexpress.com">info@businesswebexpress.com</a></div>\n' +
-'  <div class="footer-credit">&copy; ' + deployedAt.getFullYear() + ' East Tennessee Corvette Club &middot; Knoxville, TN &middot; <a href="mailto:etccwebsite.webmanager@gmail.com">etccwebsite.webmanager@gmail.com</a></div>\n' +
+// One line, three segments separated by the same &middot; that already
+// separates fields inside them. Each segment is its own <span> so a narrow
+// screen breaks between segments rather than in the middle of an address.
+'  <div class="footer-line">' +
+'<span>v' + versionString + ' &middot; Deployed ' + fmtDateTime(deployedAt) + '</span>' +
+' &middot; ' +
+'<span>Website by Business Web Express &middot; <a href="https://businesswebexpress.com" target="_blank" rel="noopener">businesswebexpress.com</a></span>' +
+' &middot; ' +
+'<span>&copy; ' + deployedAt.getFullYear() + ' East Tennessee Corvette Club &middot; Knoxville, TN &middot; <a href="mailto:etccwebsite.webmanager@gmail.com">etccwebsite.webmanager@gmail.com</a></span>' +
+'</div>\n' +
 '</footer>\n' +
 scripts.map(function (s) { return '<script>\n' + s + '\n</script>'; }).join("\n") +
 '\n</body>\n</html>\n';

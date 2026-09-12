@@ -78,7 +78,17 @@ header.app h1 { font-size: 19px; margin: 0; font-weight: 700; letter-spacing: .2
 footer.app-footer {
   text-align: center; color: var(--muted); font-size: 12px; padding: 14px 20px 20px; border-top: 1px solid var(--line);
 }
-footer.app-footer .footer-credit { font-size: 10px; margin-top: 4px; }
+/* Single-line footer: version, credit and copyright on one row at EVERY width —
+   it scales down rather than wrapping, however narrow the window gets. The line
+   measures ~103px of width per 1px of font-size, so calc(0.96vw - 0.4px) is
+   just under the size that fills the viewport minus the footer's 20px side
+   padding. min() caps it at the 12px base so it never grows on a wide monitor;
+   there is deliberately NO lower bound, so on a phone it goes genuinely tiny
+   (~3px at 375px wide) instead of breaking onto a second line. */
+footer.app-footer .footer-line {
+  white-space: nowrap; font-size: min(12px, calc(0.96vw - 0.4px));
+}
+footer.app-footer .footer-line > span { display: inline-block; }
 
 .btn {
   display: inline-block; border: 1px solid var(--line); background: #fff; color: var(--ink);
