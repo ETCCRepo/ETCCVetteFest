@@ -7,6 +7,7 @@ is gone. Getting it to work needed three live-site discoveries (host-only auth c
 popup form, postback replay) — see "This session's work (2026-09-12 — third session)".
 Shipped v2.28 (`c6d9bbe`), installer `25b43c5`, checkpoints v2.29 (`3d2d7cf`) and v2.30
 (`17feee8`, bump-only).
+Then CarShow's port of the sync fed four fixes back here — v2.31 (`f97d1d7`).
 
 Previous update: 2026-09-12 (end of a second session that day). **The app footer was
 collapsed to a single auto-shrinking line** (v2.27, `ffb776c`), this file was brought back
@@ -83,11 +84,11 @@ automated coverage — all of it was verified by hand against the live 2026 even
 (see the session entries below). The count stays at 85 because none of that work touched
 `logic.js`.
 
-**Version:** `App/version.json` — stamped **2.30** in the currently-live
+**Version:** `App/version.json` — stamped **2.31** in the currently-live
 `App/ETCCVetteFest.html` / `app-bundle.html` on the server (built and deployed 2026-09-12
-16:10, checkpoint commit `17feee8`). The file itself now reads `{major:2, minor:31}`, since
+16:34, commit `f97d1d7`). The file itself now reads `{major:2, minor:32}`, since
 `build.js` bumps-and-stores the *next* version on every run — the next build will stamp
-"2.31". **Gaps in the version sequence are normal, not lost work:** `build.js` bumps on
+"2.32". **Gaps in the version sequence are normal, not lost work:** `build.js` bumps on
 *every* run, including rebuilds that were never committed or deployed, which is why the
 shipped history reads 2.11, 2.12, 2.13, 2.15, 2.17, 2.18, 2.20, 2.22, 2.23, 2.27.
 
@@ -166,6 +167,30 @@ copy.
 **Git: pushed and working**, as of 2026-08-27 — see that session's entry below for the
 one gotcha (a global credential helper that must be worked around on every push from this
 machine).
+
+## This session's work (2026-09-12 — fourth session: CarShow port-back)
+
+The Playwright sync was ported to the **CarShow app** in a separate session
+(`Z:\Backup\Websites\CarShow\App\deploy\clubexpress.js`), and four fixes found there
+arrived in this repo's working tree uncommitted. Reviewed, verified, and shipped as
+**v2.31 (`f97d1d7`)**:
+- `normalizeClubExpressUrl()` now also rewrites **`page_id=4091` → `4055`** (public event
+  view → Admin Panels, same `item_id`). CarShow's stored URL was still 4091.
+- **The ClubExpress Chrome profile is now SHARED by both apps** (same site, same officer
+  login), so `openContext()` retries up to 4× / 15 s when the profile is busy — Chrome
+  allows one process per profile folder. Signing in via either app's
+  `clubexpress-login.js` fixes both.
+- `clubexpress-login.js` checks the session with the sync's own locators
+  (`exportsButtonCandidates` + `looksLoggedOut`). Its old `a:text-is("Exports")` check
+  could never match (the anchor's text includes the icon ligature), so it would never
+  have printed CONFIRMED.
+- `install-scheduled-task.ps1` starts its trigger **half an interval away from
+  `carshow-sync-registrations`** when that task exists. Only applies on (re)install; the
+  existing tasks already fire ~7.5 min apart (vettefest :05/:20/:35/:50 +24s, carshow
+  +7.5 min), confirmed from Task Scheduler, both last result 0.
+
+Verified: forced live import after the change — both exports (74 / 108 rows), upload 200,
+exit 0, log text now "Uploaded into Vette Fest event: 2026". Tests 85/85.
 
 ## This session's work (2026-09-12 — third session)
 
@@ -840,7 +865,7 @@ having the token; see that section and "Known follow-ups" for the exact command.
    — runs only while Admin is signed in**), `VETTEFEST_SITE_PASSWORD` as Admin's user env
    var, `npm install` in `App/`, and the logged-in ClubExpress profile at
    `C:\Users\Admin\AppData\Local\ETCC\clubexpress-profile` (MEMBER_TOKEN valid to
-   2027-10-17). Poller health: Task Scheduler's Last Run Result (0 = fine); failures also
+   2027-10-17; **shared with the CarShow sync** since 2026-09-12). Poller health: Task Scheduler's Last Run Result (0 = fine); failures also
    append to `deploy/sync-registrations.local.log`. The `/ETCCVetteFestImportData` Claude
    skill remains only as a manual fallback. If someone wants imports while signed out,
    re-run the installer **without** `-Interactive` from an elevated window of the **Admin**
