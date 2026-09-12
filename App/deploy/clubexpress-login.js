@@ -15,7 +15,14 @@
 // button on the event's Admin Panels page) and says so, rather than leaving you
 // to guess whether it worked. Re-run it whenever the sync reports
 // "ClubExpress session not logged in".
-const { openContext, PROFILE_DIR, persistentCookies } = require("./clubexpress");
+//
+// The profile is SHARED with the CarShow app (see clubexpress.js's
+// PROFILE_DIR), so signing in here -- or in CarShow's copy of this script --
+// fixes both apps' imports at once.
+const {
+  openContext, PROFILE_DIR, persistentCookies, normalizeClubExpressUrl,
+  firstVisibleInAnyFrame, exportsButtonCandidates, looksLoggedOut,
+} = require("./clubexpress");
 
 // Default matches the Setup tab's configured event URL. page_id MUST be 4055
 // (Admin Panels); 4091 is the public event view and renders logged-out-looking
@@ -23,19 +30,22 @@ const { openContext, PROFILE_DIR, persistentCookies } = require("./clubexpress")
 const DEFAULT_EVENT_URL =
   "https://www.etccwebsite.com/content.aspx?page_id=4055&club_id=313652&item_id=2897962";
 
-// Checks the session the way the unattended sync does, on its own background
-// page so the officer's tab is never navigated out from under them.
+// Checks the session EXACTLY the way the unattended sync does -- same Exports
+// button locators, same all-frames sweep -- on its own background page so the
+// officer's tab is never navigated out from under them.
+//
+// FIXED 2026-09-12 (ported back from the CarShow app): this used to look for
+// 'a:text-is("Exports")' / a "button" role named Exports. Neither can ever
+// match -- the Exports control is a LINK whose text includes its icon's
+// ligature name ("outputExports"). Verified live against a signed-in profile:
+// 0 matches for both, so the helper sat at "Not signed in yet" forever and
+// never printed CONFIRMED, however correctly the officer signed in.
 async function sessionIsLive(context, eventUrl) {
   const probe = await context.newPage();
   try {
     await probe.goto(eventUrl, { waitUntil: "domcontentloaded", timeout: 45000 });
-    if (/action=login/i.test(probe.url())) return false;
-    if (await probe.locator('input[type="password"]').count()) return false;
-    const exports = await probe
-      .locator('a:text-is("Exports"), button:text-is("Exports"), input[value="Exports" i]')
-      .count();
-    const byRole = await probe.getByRole("button", { name: /^\s*exports\s*$/i }).count();
-    return exports > 0 || byRole > 0;
+    if (await looksLoggedOut(probe)) return false;
+    return !!(await firstVisibleInAnyFrame(probe, exportsButtonCandidates, 6000));
   } catch (_) {
     return false;
   } finally {
@@ -44,7 +54,7 @@ async function sessionIsLive(context, eventUrl) {
 }
 
 (async () => {
-  const eventUrl = process.argv[2] || DEFAULT_EVENT_URL;
+  const eventUrl = normalizeClubExpressUrl(process.argv[2] || DEFAULT_EVENT_URL);
   console.log("Profile folder: " + PROFILE_DIR);
   console.log("Opening: " + eventUrl);
   console.log("");

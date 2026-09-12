@@ -99,7 +99,29 @@ if ($Interactive) {
 
 # Repetition with no explicit duration = indefinitely. Start a minute out so the
 # very first fire isn't racing this script's own registration.
-$trigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) `
+$startAt = (Get-Date).AddMinutes(1)
+
+# STAGGER AGAINST THE CARSHOW TASK (ported back from CarShow's installer,
+# 2026-09-12). Both syncs drive the same shared ClubExpress Chrome profile, and
+# Chrome allows one process per profile. Left alone, each task's phase is just
+# "whenever it was installed" -- CarShow's first install landed 11 seconds
+# behind this one. Start half an interval away from the sibling's next fire,
+# the maximum separation possible. (clubexpress.js also retries a busy
+# profile; this just keeps that from ever being needed.)
+$sibling = Get-ScheduledTask -TaskName "carshow-sync-registrations" -ErrorAction SilentlyContinue
+if ($sibling) {
+  $siblingNext = (Get-ScheduledTaskInfo -TaskName "carshow-sync-registrations").NextRunTime
+  if ($siblingNext) {
+    $candidate = $siblingNext.AddMinutes($IntervalMinutes / 2)
+    # Walk back/forward by whole intervals to the first slot at least a minute out.
+    while ($candidate -gt (Get-Date).AddMinutes(1 + $IntervalMinutes)) { $candidate = $candidate.AddMinutes(-$IntervalMinutes) }
+    while ($candidate -lt (Get-Date).AddMinutes(1)) { $candidate = $candidate.AddMinutes($IntervalMinutes) }
+    $startAt = $candidate
+    Write-Host ("stagger : CarShow next fires {0:h:mm:ss tt}; this task starts {1:h:mm:ss tt} (half an interval apart)" -f $siblingNext, $startAt)
+  }
+}
+
+$trigger = New-ScheduledTaskTrigger -Once -At $startAt `
   -RepetitionInterval (New-TimeSpan -Minutes $IntervalMinutes)
 
 $settings = New-ScheduledTaskSettingsSet `

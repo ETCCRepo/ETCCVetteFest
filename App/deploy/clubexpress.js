@@ -5,6 +5,11 @@
 // did (the check/mark_start/mark_run bridge, the upload, the log archive) was
 // already plain HTTP and now lives in sync-registrations.js.
 //
+// The CarShow app (Z:\Backup\Websites\CarShow\App\deploy\clubexpress.js) runs
+// a port of this file. Two fixes found while porting were ported back here on
+// 2026-09-12 -- the page_id=4091 repair in normalizeClubExpressUrl() and the
+// busy-profile retry in openContext() -- so keep the two copies in sync.
+//
 // Auth model, deliberately identical to the skill's: this NEVER logs in. It
 // drives a dedicated, persistent Chrome profile that an officer logged into
 // ClubExpress once by hand (see clubexpress-login.js). If that session has
@@ -31,6 +36,10 @@ const { chromium } = require("playwright-core");
 
 // Lives outside the repo: it is ~50MB of browser state, not source, and it
 // must survive the repo being moved or re-cloned.
+//
+// SHARED with the CarShow app's sync. Both events live on the same ClubExpress
+// site under the same officer login, so one signed-in profile serves both --
+// but the two scheduled tasks can then collide on it; see openContext().
 const PROFILE_DIR = path.join(
   process.env.LOCALAPPDATA || path.join(process.env.USERPROFILE || ".", "AppData", "Local"),
   "ETCC", "clubexpress-profile"
@@ -58,10 +67,21 @@ class LoginError extends Error {}
 // Normalizing here rather than only fixing the stored setting: an officer
 // pasting a URL out of the address bar should not be able to break auth in a
 // way that misreports itself as a login problem.
+//
+// Same reasoning for page_id: 4091 is the PUBLIC "Event View" (no Exports
+// button; it even renders "Member Login" to a signed-in admin), and it's what
+// you get copying the URL from the public event page. 4055 is "(Admin Panels)"
+// for the SAME item_id, which the export needs. The CarShow app's stored URL
+// was still 4091 when this sync was ported there, and its first live run only
+// succeeded because of this repair. Only 4091 is rewritten -- any other
+// page_id is left alone so a genuinely different page still fails loudly.
 function normalizeClubExpressUrl(rawUrl) {
   try {
     const u = new URL(rawUrl);
     if (/^etccwebsite\.com$/i.test(u.hostname)) u.hostname = "www." + u.hostname;
+    if (/etccwebsite\.com$/i.test(u.hostname) && u.searchParams.get("page_id") === "4091") {
+      u.searchParams.set("page_id", "4055");
+    }
     return u.toString();
   } catch (_) {
     return rawUrl; // not parseable -- let the caller's navigation report it
@@ -72,14 +92,34 @@ function normalizeClubExpressUrl(rawUrl) {
 // (channel: "chrome") rather than a Playwright-downloaded Chromium -- same
 // browser the officer logged in with, so the stored session is valid and
 // ClubExpress sees a browser it has already seen.
-async function openContext({ headless = true } = {}) {
+//
+// Retries because PROFILE_DIR is shared with the CarShow sync (see above) and
+// Chrome allows one process per profile folder. The two tasks poll on
+// independent 15-minute clocks (CarShow's installer staggers itself 7.5 min
+// away from this task) and a full run takes a few seconds, so a genuine
+// collision is rare -- but an unattended job shouldn't fail on it. Chrome's
+// error for a locked profile isn't a stable string across versions, so any
+// launch failure is retried; a real launch problem just costs ~45s.
+async function openContext({ headless = true, attempts = 4, waitMs = 15000 } = {}) {
   fs.mkdirSync(PROFILE_DIR, { recursive: true });
-  return chromium.launchPersistentContext(PROFILE_DIR, {
-    channel: "chrome",
-    headless,
-    acceptDownloads: true,
-    viewport: { width: 1440, height: 900 },
-  });
+  let lastErr = null;
+  for (let i = 1; i <= attempts; i++) {
+    try {
+      return await chromium.launchPersistentContext(PROFILE_DIR, {
+        channel: "chrome",
+        headless,
+        acceptDownloads: true,
+        viewport: { width: 1440, height: 900 },
+      });
+    } catch (err) {
+      lastErr = err;
+      if (i < attempts) await new Promise((r) => setTimeout(r, waitMs));
+    }
+  }
+  throw new Error(
+    "Could not open the ClubExpress Chrome profile after " + attempts + " tries (it may be in use by the " +
+    "CarShow sync or an open clubexpress-login.js window): " + String(lastErr && lastErr.message).split(/\r?\n/)[0]
+  );
 }
 
 // Returns the cookies that will actually still exist after Chrome restarts --
@@ -121,7 +161,9 @@ async function firstVisibleInAnyFrame(page, buildCandidates, timeout = 8000) {
 
 // The event toolbar's buttons are <a class="manager-button"> wrappers holding a
 // Material-Icons ligature span AND a label span, so the anchor's own textContent
-// is e.g. "file_uploadExports" -- matching on the anchor's text fails, and
+// is the icon's ligature name glued to the label ("outputExports" on both the
+// Vette Fest and CarShow event pages, verified live 2026-09-12) -- matching on
+// the anchor's text fails, and
 // matching the label span alone finds an element whose click does nothing
 // (the handler is on the anchor). Anchor on the label span, act on the <a>.
 function exportsButtonCandidates(frame) {
@@ -291,7 +333,7 @@ async function exportRegistrationCsvs({ eventUrl, destDir, log, headless = true 
   try {
     const page = await context.newPage();
     if (eventUrl !== originalUrl) {
-      log(`Event URL normalized to the www host (the auth cookie is host-only): ${eventUrl}`);
+      log(`Event URL normalized (www host / Admin Panels page_id=4055): ${eventUrl}`);
     }
     log(`Opening ${eventUrl}`);
     await page.goto(eventUrl, { waitUntil: "domcontentloaded", timeout: 60000 });
