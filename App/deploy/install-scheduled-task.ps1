@@ -21,10 +21,19 @@
 #   * Chrome runs headless, so it needs no desktop.
 # The payoff is no console window flashing on screen every 15 minutes, and
 # imports that keep running after the officer logs off.
+#
+#   -UserId DOMAIN\name  the account the task RUNS AS (default: whoever runs
+#                      this script). Needed when UAC elevates you into a
+#                      different admin account than the one that owns the
+#                      ClubExpress profile and VETTEFEST_SITE_PASSWORD -- the
+#                      task must run as THAT account, or it finds neither.
+#                      e.g. from an elevated "user" window:
+#                        -UserId NBKFF3A-BEELINK\Admin
 [CmdletBinding()]
 param(
   [switch]$Interactive,
   [int]$IntervalMinutes = 15,
+  [string]$UserId = "$env:USERDOMAIN\$env:USERNAME",
   [switch]$Uninstall
 )
 
@@ -51,15 +60,42 @@ if (-not (Test-Path $Script)) { throw "Cannot find $Script" }
 if (-not (Test-Path (Join-Path $AppDir "node_modules\playwright-core"))) {
   throw "playwright-core is not installed. Run 'npm install' in $AppDir first."
 }
-if (-not [Environment]::GetEnvironmentVariable("VETTEFEST_SITE_PASSWORD", "User")) {
-  throw "VETTEFEST_SITE_PASSWORD is not set as a persistent USER environment variable. Set it, then re-run."
+# Check the TARGET account's environment and profile, not the account running
+# this script -- when UAC elevates into a different admin, [Environment]'s
+# "User" scope is the wrong person's registry hive.
+try {
+  $sid = (New-Object System.Security.Principal.NTAccount($UserId)).Translate(
+    [System.Security.Principal.SecurityIdentifier]).Value
+} catch {
+  throw "Unknown account '$UserId'. Pass -UserId DOMAIN\name for the account that owns the ClubExpress profile."
+}
+$targetPw = $null
+if (Test-Path "Registry::HKEY_USERS\$sid\Environment") {
+  $targetPw = (Get-ItemProperty "Registry::HKEY_USERS\$sid\Environment" -ErrorAction SilentlyContinue).VETTEFEST_SITE_PASSWORD
+}
+if (-not $targetPw) {
+  throw "VETTEFEST_SITE_PASSWORD is not set as a persistent user environment variable for $UserId (or that account is not signed in, so its registry hive isn't loaded). Set it while signed in as $UserId, then re-run."
+}
+$profileRoot = (Get-ItemProperty "Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\$sid" -ErrorAction SilentlyContinue).ProfileImagePath
+if (-not $profileRoot -or -not (Test-Path (Join-Path $profileRoot "AppData\Local\ETCC\clubexpress-profile"))) {
+  throw "No ClubExpress profile for $UserId (expected under $profileRoot\AppData\Local\ETCC\clubexpress-profile). Run deploy\clubexpress-login.js as $UserId first."
 }
 
 Write-Host "node    : $NodeExe"
 Write-Host "script  : $Script"
 Write-Host "interval: every $IntervalMinutes minutes"
 
-$action = New-ScheduledTaskAction -Execute $NodeExe -Argument "`"$Script`"" -WorkingDirectory $AppDir
+if ($Interactive) {
+  # An Interactive task runs in the logged-on desktop, so launching node.exe
+  # directly flashes a console window every poll. conhost --headless (Windows
+  # 10 1809+/11) hosts the console without ever showing it. Registering this
+  # mode needs no elevation, which is why it's the fallback when S4U
+  # registration is refused.
+  $action = New-ScheduledTaskAction -Execute "$env:SystemRoot\System32\conhost.exe" `
+    -Argument "--headless `"$NodeExe`" `"$Script`"" -WorkingDirectory $AppDir
+} else {
+  $action = New-ScheduledTaskAction -Execute $NodeExe -Argument "`"$Script`"" -WorkingDirectory $AppDir
+}
 
 # Repetition with no explicit duration = indefinitely. Start a minute out so the
 # very first fire isn't racing this script's own registration.
@@ -76,7 +112,7 @@ $settings = New-ScheduledTaskSettingsSet `
 # stack a second browser on top of the first. ExecutionTimeLimit is the backstop
 # for a run that hangs entirely.
 
-$userId = "$env:USERDOMAIN\$env:USERNAME"
+$userId = $UserId
 if ($Interactive) {
   $principal = New-ScheduledTaskPrincipal -UserId $userId -LogonType Interactive -RunLevel Limited
   Write-Host "principal: $userId (Interactive -- runs only while logged on)"
