@@ -5,7 +5,8 @@ longer depends on Claude.** `deploy/sync-registrations.js` (Playwright) now does
 unattended import, run by a Windows Task Scheduler task; the Claude Code scheduled task
 is gone. Getting it to work needed three live-site discoveries (host-only auth cookie,
 popup form, postback replay) — see "This session's work (2026-09-12 — third session)".
-Shipped v2.28 (`c6d9bbe`), installer `25b43c5`, checkpoint v2.29 (`3d2d7cf`).
+Shipped v2.28 (`c6d9bbe`), installer `25b43c5`, checkpoints v2.29 (`3d2d7cf`) and v2.30
+(`17feee8`, bump-only).
 
 Previous update: 2026-09-12 (end of a second session that day). **The app footer was
 collapsed to a single auto-shrinking line** (v2.27, `ffb776c`), this file was brought back
@@ -82,11 +83,11 @@ automated coverage — all of it was verified by hand against the live 2026 even
 (see the session entries below). The count stays at 85 because none of that work touched
 `logic.js`.
 
-**Version:** `App/version.json` — stamped **2.29** in the currently-live
+**Version:** `App/version.json` — stamped **2.30** in the currently-live
 `App/ETCCVetteFest.html` / `app-bundle.html` on the server (built and deployed 2026-09-12
-16:06, checkpoint commit `3d2d7cf`). The file itself now reads `{major:2, minor:30}`, since
+16:10, checkpoint commit `17feee8`). The file itself now reads `{major:2, minor:31}`, since
 `build.js` bumps-and-stores the *next* version on every run — the next build will stamp
-"2.30". **Gaps in the version sequence are normal, not lost work:** `build.js` bumps on
+"2.31". **Gaps in the version sequence are normal, not lost work:** `build.js` bumps on
 *every* run, including rebuilds that were never committed or deployed, which is why the
 shipped history reads 2.11, 2.12, 2.13, 2.15, 2.17, 2.18, 2.20, 2.22, 2.23, 2.27.
 
