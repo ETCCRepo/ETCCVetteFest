@@ -65,6 +65,39 @@ function vettefest_append_json_list($file, $record) {
     return true;
 }
 
+// Counts data rows in a CSV string (header line excluded, blank trailing
+// lines excluded) — the same rule registrations-import.php's upload form
+// uses to report "Imported N registration rows", now shared so the History
+// tab's counts always mean the same thing regardless of which import path
+// (browser form or upload-registrations.js) produced them.
+function vettefest_csv_data_row_count($csvText) {
+    if (!is_string($csvText) || $csvText === '') return 0;
+    $lines = preg_split('/\r\n|\r|\n/', $csvText);
+    if (!$lines) return 0;
+    $count = 0;
+    foreach (array_slice($lines, 1) as $line) {
+        if (trim($line) !== '') $count++;
+    }
+    return $count;
+}
+
+// Appends one entry to this event's import-history.json — called by both
+// registrations-import.php (the browser upload form) and
+// registrations-upload.php (upload-registrations.js's CLI flow) right after
+// a successful save, so the History tab has one continuous log regardless of
+// which path officers use to refresh the data. Best-effort: a failure here
+// never blocks the import itself (the registration data is already saved by
+// the time this runs), it just means that one import goes unlogged.
+function vettefest_record_import_history($year, $regRows, $actRows) {
+    $file = vettefest_show_file($year, 'import-history.json');
+    if ($file === null) return false;
+    return vettefest_append_json_list($file, [
+        'importedAt' => gmdate('c'),
+        'regRows' => (int)$regRows,
+        'actRows' => (int)$actRows,
+    ]);
+}
+
 // Encodes a PHP value as JSON safe to embed inside an inline <script> block:
 // guards the two line-terminator code points JSON leaves unescaped but that
 // choke some JS engines inside string literals, and neutralizes "</script"
@@ -335,6 +368,7 @@ function vettefest_show_files() {
         'deleted-registrations.json',
         'registration-overrides.json',
         'app-settings.json',
-        'flyer.json'
+        'flyer.json',
+        'import-history.json'
     ];
 }

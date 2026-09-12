@@ -75,6 +75,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['reg_csv'])) {
             ];
             if (vettefest_write_json($REG_FILE, $data)) {
                 $imported = ['regRows' => $regRows, 'actRows' => $actRows];
+                vettefest_record_import_history($year, $regRows, $actRows);
             } else {
                 $errors[] = 'Could not save the registration data — please try again.';
             }

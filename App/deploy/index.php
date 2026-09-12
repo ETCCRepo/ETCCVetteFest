@@ -161,6 +161,15 @@ if ($year !== null) {
         : ['exists' => false];
     $bootParts[] = "    window.__vettefest.ingestFlyer(" . vettefest_safe_inline_json($flyerMeta) . ");\n";
 
+    // The History tab's log — one entry per successful import (browser form
+    // or upload-registrations.js, see vettefest_record_import_history() in
+    // lib.php), newest first so the most recent refresh is always on top.
+    $importHistory = vettefest_read_json_list(vettefest_show_file($year, 'import-history.json'));
+    usort($importHistory, function ($a, $b) {
+        return strcmp($b['importedAt'] ?? '', $a['importedAt'] ?? '');
+    });
+    $bootParts[] = "    window.__vettefest.ingestImportHistory(" . vettefest_safe_inline_json($importHistory) . ");\n";
+
     // MUST run before the ingestRows() call below — regenerate() (triggered
     // by ingestRows) excludes deleted keys from the freshly-parsed CSV the
     // moment it runs, not just after the fact.

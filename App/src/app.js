@@ -47,6 +47,14 @@
     flyerUploading: false,
     flyerError: null,
 
+    // The History tab's log — one entry per successful import ({ importedAt,
+    // regRows, actRows }), newest first. Filled by ingestImportHistory() from
+    // index.php's boot script; recorded server-side at import time (see
+    // vettefest_record_import_history() in lib.php), not client-side, so it
+    // stays accurate regardless of which import path (the browser form or
+    // upload-registrations.js) an officer used.
+    importHistory: [],
+
     zoom: 1,          // table zoom level (1 = 100%); lets all columns fit without scrolling
     zoomAutoFitDone: false, // the table defaults to "Fit" once per session (not on every
                              // tab switch, so a manual zoom choice sticks)
@@ -291,11 +299,12 @@
 
     app.appendChild(buildTabs());
 
-    // The T-Shirts, Reports and Setup tabs handle their own empty states, so
-    // they work before any CSV pair has been imported.
+    // The T-Shirts, Reports, Setup and History tabs handle their own empty
+    // states, so they work before any CSV pair has been imported.
     if (state.tab === "tsh") { app.appendChild(buildTshirtView()); return; }
     if (state.tab === "reports") { app.appendChild(buildReportsView()); return; }
     if (state.tab === "setup") { app.appendChild(buildSetupView()); return; }
+    if (state.tab === "history") { app.appendChild(buildHistoryView()); return; }
 
     if (!state.result) {
       app.appendChild(el("div", { class: "empty-state" },
@@ -324,7 +333,7 @@
       return t;
     };
     return el("div", { class: "tabs no-print" },
-      [mk("sum", "Summary"), mk("reg", "Registration"), mk("tsh", "T-Shirts"), mk("reports", "Reports"), mk("setup", "Setup")]);
+      [mk("sum", "Summary"), mk("reg", "Registration"), mk("tsh", "T-Shirts"), mk("reports", "Reports"), mk("setup", "Setup"), mk("history", "History")]);
   }
 
   // ---------- Events picker (the landing screen, shown before the tabs) ----------
@@ -1741,6 +1750,43 @@
     return wrap;
   }
 
+  // ---------- History tab ----------
+  // A plain log of every successful CSV import for this event — timestamp,
+  // registration row count, activity row count — newest first. Recorded
+  // server-side at import time (vettefest_record_import_history() in
+  // lib.php) rather than derived from anything client-side, so it stays
+  // accurate regardless of whether an officer used the browser upload form
+  // or upload-registrations.js, and survives across reloads/re-imports the
+  // same way the stored CSV data itself does.
+  function buildHistoryView() {
+    var wrap = el("div", { class: "view history-view" });
+    var panel = el("div", { class: "panel" }, [el("h3", { text: "Import History" })]);
+    panel.appendChild(el("div", { class: "hint", style: "margin-bottom:10px" },
+      ["Every time a Registration Data / Activity Registrant Data CSV pair was imported for this event, oldest at the bottom."]));
+
+    if (!state.importHistory.length) {
+      panel.appendChild(el("div", { class: "empty-state" }, ["No imports recorded yet for this event."]));
+      wrap.appendChild(panel);
+      return wrap;
+    }
+
+    var thead = el("thead", {}, [el("tr", {}, [
+      el("th", { text: "Imported" }),
+      el("th", { class: "num", text: "Registrations" }),
+      el("th", { class: "num", text: "Activities" })
+    ])]);
+    var tbody = el("tbody", {}, state.importHistory.map(function (h) {
+      return el("tr", {}, [
+        el("td", { text: h.importedAt ? fmtDate(h.importedAt) : "—" }),
+        el("td", { class: "num", text: String(h.regRows == null ? "—" : h.regRows) }),
+        el("td", { class: "num", text: String(h.actRows == null ? "—" : h.actRows) })
+      ]);
+    }));
+    panel.appendChild(el("table", { class: "grid" }, [thead, tbody]));
+    wrap.appendChild(panel);
+    return wrap;
+  }
+
   // POSTs the chosen flyer file to flyer.php (multipart) for the open event,
   // then updates state.flyer from the response so the Setup tab's "current
   // flyer" line and the Reports tab's Print Flyer button both reflect it
@@ -2468,6 +2514,12 @@
       state.flyer = (meta && typeof meta === "object" && meta.exists)
         ? { exists: true, mime: meta.mime, name: meta.name, uploadedAt: meta.uploadedAt }
         : { exists: false };
+    },
+    // Called by index.php's boot script with this event's import log
+    // ({ importedAt, regRows, actRows }[]), already sorted newest-first —
+    // see the History tab (buildHistoryView()).
+    ingestImportHistory: function (list) {
+      state.importHistory = Array.isArray(list) ? list : [];
     },
     // Called BEFORE ingestRows(), with the set of csvRegKey()s previously
     // deleted — so regenerate() can exclude them the moment the CSV is

@@ -66,4 +66,6 @@ if (!vettefest_write_json($regFile, $data)) {
     exit;
 }
 
+vettefest_record_import_history($year, vettefest_csv_data_row_count($regCsv), vettefest_csv_data_row_count($actCsv));
+
 echo json_encode(['ok' => true]);
