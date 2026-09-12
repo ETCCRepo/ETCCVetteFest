@@ -1824,9 +1824,9 @@
     return el("div", { style: style }, [parts.join("")]);
   }
 
-  // Setup tab > Import Schedule — the ClubExpress event URL (used by the
-  // /ETCCVetteFestImportData Claude skill instead of a hardcoded URL that goes
-  // stale every year), an "Import Now" button, and an auto-import schedule
+  // Setup tab > Import Schedule — the ClubExpress event URL (read by
+  // deploy/sync-registrations.js via import-schedule.php's 'check', instead of
+  // a hardcoded URL that goes stale every year), an "Import Now" button, and an auto-import schedule
   // (enable checkbox, one or more daily times, and an optional active-date
   // range). None of this runs anything itself — see import-schedule.php's
   // header comment and requestImportNow()/saveImportScheduleSettings() for how
@@ -1903,21 +1903,21 @@
     return el("div", { class: "panel", style: "margin-top:16px" }, [
       el("h3", { text: "Import Schedule" }),
       el("div", { class: "hint", style: "margin-bottom:10px" }, [
-        "Controls the /ETCCVetteFestImportData automation that pulls fresh ClubExpress data — that " +
-        "still only runs on a machine where Claude Code and Chrome are set up for it, and it checks " +
-        "in here periodically, so Import Now and scheduled times take effect within a few minutes, not instantly."
+        "Controls the automation that pulls fresh ClubExpress data. A web page can't drive ClubExpress " +
+        "itself, so the work is done by a Windows scheduled task on an officer's machine that checks in " +
+        "here every ~15 minutes — Import Now and scheduled times take effect within a few minutes, not instantly."
       ]),
       buildLastRunLine(),
       el("div", { class: "form-row sched" }, [
         el("span", { class: "form-label", text: "Scheduled Task" }),
         el("div", {}, [
           el("div", { class: "setup-hint" }, [
-            "The poller that checks this page every ~15 minutes runs as a Claude Code scheduled task " +
-            "(\"vettefest-sync-registrations\") — a different thing from the \"Last run\" line above, " +
-            "which only reflects an actual import attempt. To see whether the poller itself is alive " +
-            "(when it last checked in, and whether that check succeeded), open Claude Code and look at " +
-            "Scheduled Tasks → vettefest-sync-registrations → Runs. This app has no way to show " +
-            "that here — the task runs on a machine, not on this server."
+            "The poller is the Windows Task Scheduler task \"vettefest-sync-registrations\", running " +
+            "deploy/sync-registrations.js — a different thing from the \"Last run\" line above, which only " +
+            "reflects an actual import attempt (most checks find nothing due and leave no trace). To see " +
+            "whether the poller itself is alive, open Task Scheduler on that machine and check the task's " +
+            "Last Run Time and Last Run Result (0 = fine). If an import reports \"ClubExpress session not " +
+            "logged in\", run deploy/clubexpress-login.js there and sign in with Remember Me ticked."
           ])
         ])
       ]),
@@ -2091,8 +2091,9 @@
   }
 
   // Setup tab > Import Schedule > "Import Now" — leaves a request flag
-  // (import-schedule.php action=request) for a scheduled Claude Code task on
-  // an officer's machine to pick up on its next poll. This endpoint cannot
+  // (import-schedule.php action=request) for the Windows scheduled task
+  // (deploy/sync-registrations.js) on an officer's machine to pick up on its
+  // next poll. This endpoint cannot
   // itself drive a browser through ClubExpress, so there's an inherent delay —
   // the status text says so rather than implying anything happens instantly.
   function requestImportNow() {

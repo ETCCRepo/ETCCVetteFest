@@ -123,6 +123,68 @@ Both CSVs come from ClubExpress: **Admin Options → Exports → "Registration D
 again for **"Activity Registrant Data"**. The activity export is what carries the
 admissions and shirt purchases, so without it every row imports with no admission at all.
 
+## Automated imports (no Claude subscription required)
+
+The Setup tab's Import Schedule panel (Event URL, auto-import times, "Import Now") only
+*leaves a signal* — a web page can't drive a browser through ClubExpress. The other half
+is `deploy/sync-registrations.js`, run by **Windows Task Scheduler** every 15 minutes on
+an officer's machine. It replaced an equivalent Claude Code scheduled task; the server
+side is unchanged, and `import-schedule.php` / `logs.php` / `registrations-upload.php`
+never knew the difference.
+
+```
+sync-registrations.js  --check-------> import-schedule.php   "anything due?"
+                       --mark_start--> import-schedule.php   Setup tab: "Import started"
+                       --Playwright--> ClubExpress Exports   the two CSVs
+                       --spawn-------> upload-registrations.js -> registrations-upload.php
+                       --store-------> logs.php              History tab's log icon
+                       --mark_run----> import-schedule.php   Setup tab: "Last run"
+```
+
+Most polls find nothing due and exit silently in about half a second — no browser, no
+files, no log. Only a due slot or a clicked **Import Now** opens Chrome.
+
+### One-time setup on the machine that runs it
+
+1. `VETTEFEST_SITE_PASSWORD` set as a persistent Windows **user** environment variable.
+2. `npm install` in `App/` (pulls `playwright-core`; it drives the system's real Chrome,
+   so there is no browser download).
+3. `node deploy/clubexpress-login.js` — opens a visible Chrome window on a **dedicated**
+   profile at `%LOCALAPPDATA%\ETCC\clubexpress-profile`. Sign into ClubExpress by hand,
+   tick **Remember Me**, close the window.
+4. Register the task (see `deploy/install-scheduled-task.ps1`).
+
+### Authentication, deliberately
+
+Nothing in this pipeline ever types a ClubExpress username or password. The sync reuses
+the session left behind in step 3 and, when that lapses, fails with
+`ClubExpress session not logged in` — which shows up in the Setup tab's "Last run" line
+and as a FAILED row in the History tab. The fix is to re-run step 3. ClubExpress admin
+credentials are therefore never stored on this machine or reachable by an automation bug.
+
+A dedicated profile, not the officer's everyday Chrome: Chrome allows only one process
+per profile folder, so reusing the default one would fail whenever they had Chrome open.
+
+### Running it by hand
+
+```bash
+node deploy/sync-registrations.js --force --headed
+```
+
+`--force` skips the schedule check and imports immediately (reporting itself to the
+server as a `manual` run, exactly like an Import Now click). `--headed` shows the Chrome
+window, which is how to see what ClubExpress is actually doing when something breaks.
+
+### When it breaks
+
+Unlike the Claude task it replaced, this can't improvise around a ClubExpress redesign.
+It anchors on visible text and roles rather than coordinates or generated ASP.NET ids, so
+ordinary layout shifts are survivable — but a renamed button will stop it. It fails loudly
+rather than silently: non-zero exit (Task Scheduler's "Last Run Result"), a FAILED row in
+the History tab, the archived log, and a line in `deploy/sync-registrations.local.log`.
+
+`/ETCCVetteFestImportData` is still available as a manual fallback for that day.
+
 ## Deploying code
 
 ```bash
