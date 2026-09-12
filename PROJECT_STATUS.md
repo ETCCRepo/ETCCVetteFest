@@ -1,6 +1,13 @@
 # ETCC Vette Fest App — Project Status
 
-Last updated: 2026-09-12 (end of a second session that day). **The app footer was
+Last updated: 2026-09-12 (end of a third session that day). **The ClubExpress import no
+longer depends on Claude.** `deploy/sync-registrations.js` (Playwright) now does the whole
+unattended import, run by a Windows Task Scheduler task; the Claude Code scheduled task
+is gone. Getting it to work needed three live-site discoveries (host-only auth cookie,
+popup form, postback replay) — see "This session's work (2026-09-12 — third session)".
+Shipped v2.28 (`c6d9bbe`), installer `25b43c5`, checkpoint v2.29 (`3d2d7cf`).
+
+Previous update: 2026-09-12 (end of a second session that day). **The app footer was
 collapsed to a single auto-shrinking line** (v2.27, `ffb776c`), this file was brought back
 in sync with the code after two undocumented days (`4343e9d`), and a **correction** was
 recorded: the live auto-import schedule is *not* the enabled-hourly-unbounded one the
@@ -75,11 +82,11 @@ automated coverage — all of it was verified by hand against the live 2026 even
 (see the session entries below). The count stays at 85 because none of that work touched
 `logic.js`.
 
-**Version:** `App/version.json` — stamped **2.27** in the currently-live
+**Version:** `App/version.json` — stamped **2.29** in the currently-live
 `App/ETCCVetteFest.html` / `app-bundle.html` on the server (built and deployed 2026-09-12
-13:33, commit `ffb776c`). The file itself now reads `{major:2, minor:28}`, since
+16:06, checkpoint commit `3d2d7cf`). The file itself now reads `{major:2, minor:30}`, since
 `build.js` bumps-and-stores the *next* version on every run — the next build will stamp
-"2.28". **Gaps in the version sequence are normal, not lost work:** `build.js` bumps on
+"2.30". **Gaps in the version sequence are normal, not lost work:** `build.js` bumps on
 *every* run, including rebuilds that were never committed or deployed, which is why the
 shipped history reads 2.11, 2.12, 2.13, 2.15, 2.17, 2.18, 2.20, 2.22, 2.23, 2.27.
 
@@ -158,6 +165,74 @@ copy.
 **Git: pushed and working**, as of 2026-08-27 — see that session's entry below for the
 one gotcha (a global credential helper that must be worked around on every push from this
 machine).
+
+## This session's work (2026-09-12 — third session)
+
+**Goal (user): "continue with implementation not to depend on claude."** A previous
+session had left four uncommitted files — `deploy/clubexpress.js`,
+`deploy/clubexpress-login.js`, `deploy/sync-registrations.js`,
+`deploy/install-scheduled-task.ps1` — plus README/package.json changes adding
+`playwright-core`. The code was written but **had never completed an export**: the two
+successful runs in the server's log archive that day were the old Claude-in-Chrome path.
+
+**How the pieces fit (unchanged server contract):** the Windows task runs
+`node deploy/sync-registrations.js` every 15 min → `check` on `import-schedule.php` (exits
+silently if nothing due) → `mark_start` → `clubexpress.js` exports both CSVs into the
+Exports folder → `upload-registrations.js` → `registrations-upload.php` → log to `logs.php`
+→ `mark_run`. Setup/History tabs needed no server change.
+
+**Three live-site discoveries, each verified with throwaway Playwright probes:**
+1. **ClubExpress's auth cookie `MEMBER_TOKEN` is host-only on `www.etccwebsite.com`.** The
+   Setup tab's stored Event URL was `https://etccwebsite.com/...` (no www), so the browser
+   withheld the cookie and ClubExpress bounced to `action=login` — every run reported
+   "ClubExpress session not logged in" while the stored session was **valid until
+   2027-10-17**. Re-logging-in would never have fixed it. Fixed both ways: the stored URL
+   now has `www.`, and `normalizeClubExpressUrl()` in `clubexpress.js` adds it; the login
+   error now names the host when that's the cause.
+2. **The Exports toolbar button opens a modal via
+   `openModalPopup('/popup.aspx?page_id=4036&club_id=…&item_id=…')`.** `findExportsPopupUrl()`
+   parses that path out of the button's onclick and loads the form directly — no dialog
+   driving. (The button is `<a class="manager-button">` holding a Material-Icons ligature
+   span plus `<span class="manager-button-text">Exports</span>`; the anchor's own text is
+   "file_uploadExports", so locators must key on the label span and act on the `<a>`.)
+3. **Clicking Export cannot work under automation.** Export is
+   `<a id="ctl00_save_button">` → `doExport()` → `__doPostBack`. Headless Chrome gets **403
+   on the Telerik/MS-AJAX `WebResource.axd` bundles** (so `Sys`/`$telerik` never load), and
+   even headed, MS-AJAX `_doPostBack` reads `arguments.callee` and throws when scripted.
+   **Solution:** serialize the WebForms form (`__VIEWSTATE` etc., chosen radio,
+   `__EVENTTARGET=ctl00$save_button`) and POST it with `page.request.post` (shares the
+   profile's cookies). ClubExpress returns `text/csv` attachments. Anything that isn't a CSV
+   is refused rather than saved. Works headless; a full run takes ~4 s.
+   Radios are matched by exact `<label for>` text (Registration Data = value 1, Activity
+   Registrant Data = value 3); the Status filter keeps its all-statuses default.
+
+**Other fixes:** `--force` skipped the `check` call and so had no Event URL (crashed with
+`page.goto: url … got undefined`) — it now still calls `check` and only ignores
+`shouldRun`. Errors are trimmed to one line for the Setup "Last run" line / History tab
+(Playwright's multi-line call log was dumping into the UI — the user screenshotted it);
+full detail stays in the archived log. `clubexpress-login.js` now keeps watching until the
+window closes and reports DURABLE vs temporary session (via `persistentCookies()`), warning
+when "Remember Me" wasn't ticked. Setup tab copy no longer describes a Claude Code task.
+
+**Task registration** — `install-scheduled-task.ps1` gained `-UserId` and a preflight that
+checks the *target* account's `HKEY_USERS\<sid>\Environment` password and ClubExpress
+profile. S4U registration ("run whether logged on or not") was **refused (Access denied)**
+both from this unelevated session and from the user's elevated window — which runs as a
+different account, `nbkff3a-beelink\user`, not `Admin`. So the task is registered
+**`-Interactive` as `NBKFF3A-BEELINK\Admin`**, launching node via
+`conhost.exe --headless` (no window flash). Consequence: **imports only run while Admin is
+signed in.**
+
+**Late fix:** the user noticed the archived log said `Uploaded into car show: 2026` —
+leftover CarShow wording in `upload-registrations.js` (console text only; the data always
+went to Vette Fest). Now `Uploaded into Vette Fest event:`, plus the matching
+year-validation message. The scheduled task runs the repo file, so it takes effect on the
+next poll with no reinstall.
+
+**Verified:** manual `--force` run → both exports (74 / 108 rows), upload 200, exit 0.
+Then `Start-ScheduledTask` → a real **scheduled:16:00** import through Task Scheduler,
+`status: success`, log `sync-20260912-160433.log`, LastTaskResult 0. The Claude Code
+scheduled task list is empty (checked). Tests 85/85.
 
 ## This session's work (2026-09-12 — later session)
 
@@ -757,23 +832,30 @@ having the token; see that section and "Known follow-ups" for the exact command.
    glob. (Bit the flyer.php work on 2026-09-10 before it was noticed. The four endpoints
    added since are all on the list — verified 2026-09-12.) Same applies to
    `vettefest_show_files()` in `lib.php` for any new per-event JSON file.
-6. **The import automation is not in this repo.** `vettefest-sync-registrations` lives in
-   `~/.claude/scheduled-tasks/`, the import skill in `~/.claude/skills/`, and
-   `VETTEFEST_SITE_PASSWORD` is a persistent Windows *user* environment variable. A fresh
-   clone gets the app but none of the automation, and after a machine reboot it is worth
-   confirming the env var still reaches the task's process (that exact check is what
-   `ba448cb` recorded). The task's own health is visible only in Claude Code → Scheduled
-   Tasks → Runs, never in the app — by design, see the 2026-09-12 entry §3.
-7. **Auto-import on the 2026 event is currently OFF, and the end date is unsettled.** As
-   read from the live server on 2026-09-12: `autoImportEnabled: false`,
-   `autoImportIntervalHours: 0`, `autoImportTimes: []`, `autoImportStartDate: 2026-09-12`,
-   `autoImportEndDate: 2026-09-20`. **Open item:** the user asked for an end date other
-   than 2026-09-20 but had not supplied one when the session ended, and chose to leave
-   auto-import disabled for now — so the end date is inert until someone re-enables the
-   schedule. The comparison is inclusive (`$today <= $endDate`, Eastern, per
-   `import-schedule.php`), and a manual "Import Now" bypasses both the window and the
-   enabled flag. This setting lives only in `data/2026/app-settings.json` on the server —
-   it is in no diff and no backup here, so **read it before quoting it.**
+6. **The import automation is now in this repo, but its machine setup is not.** Code:
+   `deploy/sync-registrations.js`, `clubexpress.js`, `clubexpress-login.js`,
+   `install-scheduled-task.ps1` (README "Automated imports"). Per-machine, outside git: the
+   Windows task `vettefest-sync-registrations` (**Interactive, as `NBKFF3A-BEELINK\Admin`
+   — runs only while Admin is signed in**), `VETTEFEST_SITE_PASSWORD` as Admin's user env
+   var, `npm install` in `App/`, and the logged-in ClubExpress profile at
+   `C:\Users\Admin\AppData\Local\ETCC\clubexpress-profile` (MEMBER_TOKEN valid to
+   2027-10-17). Poller health: Task Scheduler's Last Run Result (0 = fine); failures also
+   append to `deploy/sync-registrations.local.log`. The `/ETCCVetteFestImportData` Claude
+   skill remains only as a manual fallback. If someone wants imports while signed out,
+   re-run the installer **without** `-Interactive` from an elevated window of the **Admin**
+   account itself — S4U was refused from both other contexts tried.
+   **Fragility to know:** the export path depends on ClubExpress internals discovered on
+   2026-09-12 — the `openModalPopup('/popup.aspx…')` onclick, `<label for>` radio text, and
+   `ctl00$save_button` as the postback target. A ClubExpress redesign that changes those
+   fails loudly (FAILED History row, non-zero exit), not silently.
+7. **Auto-import on the 2026 event is ON.** Read from the live server at end of the third
+   2026-09-12 session: `autoImportEnabled: true`, `autoImportIntervalHours: 1`,
+   `autoImportTimes: []`, `autoImportStartDate: 2026-09-12`, `autoImportEndDate:
+   2026-09-27` (the earlier session's "OFF / end date 09-20 unsettled" note is superseded
+   — someone changed it in the Setup tab between sessions). The comparison is inclusive
+   (`$today <= $endDate`, Eastern), and "Import Now" bypasses both the window and the
+   enabled flag. This lives only in `data/2026/app-settings.json` on the server — **read it
+   before quoting it.** Event URL is now the `www.` host.
 8. **No UI has automated coverage.** The regression suite is logic-only, so the Setup tab,
    Import Schedule, History tab, flyer feature, and the whole scheduled-task handshake were
    all verified by hand against the live 2026 event and nothing guards them against

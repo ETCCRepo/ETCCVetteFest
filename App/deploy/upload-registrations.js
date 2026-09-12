@@ -51,7 +51,7 @@ if (!password) {
   process.exit(1);
 }
 if (!/^[0-9]{4}$/.test(year)) {
-  console.error("VETTEFEST_YEAR must be a four-digit car show year (got: " + year + ").");
+  console.error("VETTEFEST_YEAR must be a four-digit Vette Fest event year (got: " + year + ").");
   process.exit(1);
 }
 
@@ -79,7 +79,7 @@ var req = https.request({
   res.on("end", function () {
     console.log("Status: " + res.statusCode);
     console.log(body);
-    console.log("Uploaded into car show: " + year);
+    console.log("Uploaded into Vette Fest event: " + year);
     console.log("Uploaded from:");
     console.log("  " + regCsvPath);
     console.log("  " + actCsvPath);
