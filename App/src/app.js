@@ -1908,6 +1908,19 @@
         "in here periodically, so Import Now and scheduled times take effect within a few minutes, not instantly."
       ]),
       buildLastRunLine(),
+      el("div", { class: "form-row sched" }, [
+        el("span", { class: "form-label", text: "Scheduled Task" }),
+        el("div", {}, [
+          el("div", { class: "setup-hint" }, [
+            "The poller that checks this page every ~15 minutes runs as a Claude Code scheduled task " +
+            "(\"vettefest-sync-registrations\") — a different thing from the \"Last run\" line above, " +
+            "which only reflects an actual import attempt. To see whether the poller itself is alive " +
+            "(when it last checked in, and whether that check succeeded), open Claude Code and look at " +
+            "Scheduled Tasks → vettefest-sync-registrations → Runs. This app has no way to show " +
+            "that here — the task runs on a machine, not on this server."
+          ])
+        ])
+      ]),
       el("div", { class: "form-row sched" }, [el("span", { class: "form-label", text: "Event URL" }), eventUrlInput]),
       el("div", { class: "form-row sched" }, [
         el("span", { class: "form-label", text: "Log Directory" }),
