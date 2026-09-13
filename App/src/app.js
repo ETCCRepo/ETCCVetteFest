@@ -61,8 +61,9 @@
     deleteHistoryConfirm: null, // "selected" | "all" | null — which delete is awaiting confirmation
 
     // Setup tab > Import Schedule — separate save state from the Settings
-    // modal's (saveAppSettings), since this one is driven by an explicit Save
-    // button rather than per-field blur. See saveImportScheduleSettings().
+    // modal's (saveAppSettings), since this is its own small per-event JSON
+    // rather than the general app-settings save. Auto-saves per field, same
+    // idea as the Settings modal — see saveImportScheduleSettings().
     importScheduleSaving: false,
     importScheduleError: null,
     importScheduleSaved: false,
@@ -1873,15 +1874,19 @@
     var startDateInput = el("input", { type: "date", value: s.startDate || "" });
     var endDateInput = el("input", { type: "date", value: s.endDate || "" });
 
-    var saveBtn = el("button", { type: "button", class: "btn primary" }, ["Save"]);
-    if (state.backupScheduleSaving) saveBtn.setAttribute("disabled", "disabled");
-    saveBtn.addEventListener("click", function () {
+    // Auto-save: both fields save themselves (no Save button) on change —
+    // same idea as the Setup tab's Import Schedule autosave above.
+    function autoSaveBackupSchedule() {
       saveBackupSchedule({
         enabled: enableCb.checked,
         startDate: startDateInput.value,
         endDate: endDateInput.value
       });
-    });
+    }
+    enableCb.addEventListener("change", autoSaveBackupSchedule);
+    startDateInput.addEventListener("change", autoSaveBackupSchedule);
+    endDateInput.addEventListener("change", autoSaveBackupSchedule);
+
     var saveStatus = [];
     if (state.backupScheduleSaving) saveStatus.push(el("span", { class: "count" }, ["Saving…"]));
     else if (state.backupScheduleSaved) saveStatus.push(el("span", { class: "count", style: "color:var(--good)" }, ["Saved."]));
@@ -1905,9 +1910,9 @@
         el("div", { style: "display:flex; gap:8px; align-items:center" }, [
           startDateInput, document.createTextNode("to"), endDateInput
         ])
-      ]),
-      el("div", { class: "settings-actions" }, [saveBtn].concat(saveStatus))
+      ])
     ];
+    if (saveStatus.length) fields.push(el("div", { class: "settings-actions" }, saveStatus));
     if (lastRunLine) fields.push(lastRunLine);
 
     return el("div", { style: "margin-top:14px; padding-top:14px; border-top:1px solid var(--line)" }, fields);
@@ -2011,15 +2016,47 @@
     var startDateInput = el("input", { type: "date", value: s.autoImportStartDate || "" });
     var endDateInput = el("input", { type: "date", value: s.autoImportEndDate || "" });
 
+    // Auto-save: every field below saves the whole schedule (no Save button)
+    // as soon as it changes — same idea as the Settings modal's
+    // autoSaveSettings(), a full patch built fresh from every field's current
+    // DOM value every time, so one changed field can't clobber the others.
+    // Text fields save on blur (so a value isn't half-typed mid-save);
+    // checkbox/select/date fields save on change, since that's their natural
+    // "the user just committed a value" event.
+    function autoSaveImportSchedule() {
+      var times = Array.prototype.map.call(timesWrap.querySelectorAll("input[type=time]"), function (i) { return i.value; })
+        .filter(function (v) { return v; });
+      saveImportScheduleSettings({
+        eventUrl: eventUrlInput.value.trim(),
+        autoImportEnabled: enableCb.checked,
+        autoImportTimes: times,
+        autoImportIntervalHours: Number(intervalSel.value),
+        autoImportStartDate: startDateInput.value,
+        autoImportEndDate: endDateInput.value
+      });
+    }
+    eventUrlInput.addEventListener("blur", autoSaveImportSchedule);
+    enableCb.addEventListener("change", autoSaveImportSchedule);
+    startDateInput.addEventListener("change", autoSaveImportSchedule);
+    endDateInput.addEventListener("change", autoSaveImportSchedule);
+
     // One <input type=time> per configured daily run time — plain DOM
-    // add/remove rather than tracking a parallel array in state, since Save
-    // reads every row's current value straight off the DOM.
+    // add/remove rather than tracking a parallel array in state, since
+    // autoSaveImportSchedule() reads every row's current value straight off
+    // the DOM. Removing a row saves immediately (nothing else would ever
+    // fire for a row that's no longer there to blur); a newly added blank
+    // row only saves once it's given a value, since autoSaveImportSchedule()
+    // filters out empty times anyway.
     var timesWrap = el("div", {});
     function addTimeRow(value) {
       var input = el("input", { type: "time", value: value || "" });
+      input.addEventListener("change", autoSaveImportSchedule);
       var removeBtn = el("button", { type: "button", class: "btn", style: "padding:4px 10px" }, ["✕"]);
       var row = el("div", { style: "display:flex; gap:6px; margin-bottom:6px; align-items:center" }, [input, removeBtn]);
-      removeBtn.addEventListener("click", function () { timesWrap.removeChild(row); });
+      removeBtn.addEventListener("click", function () {
+        timesWrap.removeChild(row);
+        autoSaveImportSchedule();
+      });
       timesWrap.appendChild(row);
     }
     (s.autoImportTimes || []).forEach(function (t) { addTimeRow(t); });
@@ -2039,27 +2076,14 @@
       if (Number(s.autoImportIntervalHours) === opt[0]) o.setAttribute("selected", "selected");
       intervalSel.appendChild(o);
     });
+    intervalSel.addEventListener("change", autoSaveImportSchedule);
 
-    var saveBtn = el("button", { type: "button", class: "btn primary" }, ["Save"]);
-    if (state.importScheduleSaving) saveBtn.setAttribute("disabled", "disabled");
-    saveBtn.addEventListener("click", function () {
-      var times = Array.prototype.map.call(timesWrap.querySelectorAll("input[type=time]"), function (i) { return i.value; })
-        .filter(function (v) { return v; });
-      saveImportScheduleSettings({
-        eventUrl: eventUrlInput.value.trim(),
-        autoImportEnabled: enableCb.checked,
-        autoImportTimes: times,
-        autoImportIntervalHours: Number(intervalSel.value),
-        autoImportStartDate: startDateInput.value,
-        autoImportEndDate: endDateInput.value
-      });
-    });
     var saveStatus = [];
     if (state.importScheduleSaving) saveStatus.push(el("span", { class: "count" }, ["Saving…"]));
     else if (state.importScheduleSaved) saveStatus.push(el("span", { class: "count", style: "color:var(--good)" }, ["Saved."]));
     if (state.importScheduleError) saveStatus.push(el("div", { class: "form-error" }, [state.importScheduleError]));
 
-    return el("div", { class: "panel", style: "margin-top:16px" }, [
+    var rows = [
       el("h3", { text: "Import Schedule" }),
       el("div", { class: "hint", style: "margin-bottom:10px" }, [
         "Controls the automation that pulls fresh ClubExpress data. A web page can't drive ClubExpress " +
@@ -2105,9 +2129,11 @@
           intervalSel,
           el("div", { class: "setup-hint" }, ["Runs alongside any Times above, not instead of them."])
         ])
-      ]),
-      el("div", { class: "settings-actions" }, [saveBtn].concat(saveStatus))
-    ]);
+      ])
+    ];
+    if (saveStatus.length) rows.push(el("div", { class: "settings-actions" }, saveStatus));
+
+    return el("div", { class: "panel", style: "margin-top:16px" }, rows);
   }
 
   // ---------- History tab ----------
@@ -2221,17 +2247,19 @@
 
   // Setup tab > Import Schedule's own save — same app-settings.php endpoint
   // and patch shape as saveAppSettings(), but a SEPARATE function rather than
-  // reusing it: saveAppSettings deliberately skips re-rendering until its
-  // request settles (it's wired to per-field blur events that fire while
-  // someone might still be tabbing through the Settings modal). This one is
-  // wired to a single explicit Save button click, so re-rendering immediately
-  // (to show "Saving…") carries none of that focus-stealing risk.
+  // reusing it (their state fields — importScheduleSaving/etc. vs.
+  // appSettingsSaving/etc. — are read by different parts of the Setup tab).
+  // Like saveAppSettings, this deliberately skips re-rendering until the
+  // request settles: it's wired to every field's blur/change (see
+  // autoSaveImportSchedule() above), which fire while someone might still be
+  // tabbing through several fields — a synchronous full renderViews() would
+  // tear down and rebuild every input on the page mid-Tab, stranding
+  // keystrokes on a DOM node the browser already forgot about.
   function saveImportScheduleSettings(patch) {
     Object.keys(patch).forEach(function (k) { state.appSettings[k] = patch[k]; });
     state.importScheduleSaving = true;
     state.importScheduleError = null;
     state.importScheduleSaved = false;
-    renderViews();
     if (!SITE_CONFIG.appSettingsApiUrl) { state.importScheduleSaving = false; renderViews(); return; }
     fetch(SITE_CONFIG.appSettingsApiUrl, {
       method: "POST",
@@ -2381,12 +2409,16 @@
         }
       }).catch(function () { /* keep showing whatever's already loaded */ });
   }
+  // Deliberately no renderViews() before the fetch — this is wired to
+  // enableCb/startDateInput/endDateInput's change events (autoSaveBackupSchedule()
+  // above), same reason saveImportScheduleSettings() skips it: a synchronous
+  // full re-render mid-interaction would tear down and rebuild every input on
+  // the page.
   function saveBackupSchedule(settings) {
     if (!SITE_CONFIG.backupApiUrl) return;
     state.backupScheduleSaving = true;
     state.backupScheduleError = null;
     state.backupScheduleSaved = false;
-    renderViews();
     fetch(SITE_CONFIG.backupApiUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
