@@ -1066,14 +1066,15 @@ having the token; see that section and "Known follow-ups" for the exact command.
    2026-09-12 — the `openModalPopup('/popup.aspx…')` onclick, `<label for>` radio text, and
    `ctl00$save_button` as the postback target. A ClubExpress redesign that changes those
    fails loudly (FAILED History row, non-zero exit), not silently.
-7. **Auto-import on the 2026 event is ON.** Read from the live server at end of the third
-   2026-09-12 session: `autoImportEnabled: true`, `autoImportIntervalHours: 1`,
-   `autoImportTimes: []`, `autoImportStartDate: 2026-09-12`, `autoImportEndDate:
-   2026-09-27` (the earlier session's "OFF / end date 09-20 unsettled" note is superseded
-   — someone changed it in the Setup tab between sessions). The comparison is inclusive
-   (`$today <= $endDate`, Eastern), and "Import Now" bypasses both the window and the
-   enabled flag. This lives only in `data/2026/app-settings.json` on the server — **read it
-   before quoting it.** Event URL is now the `www.` host.
+7. **Auto-import on the 2026 event: confirmed fine by the user on 2026-09-13, nothing
+   further to track.** As last read from the live server: `autoImportEnabled: true`,
+   `autoImportIntervalHours: 1`, `autoImportTimes: []`, `autoImportStartDate: 2026-09-12`,
+   `autoImportEndDate: 2026-09-27`. This lives only in `data/2026/app-settings.json` on the
+   server, so a future session should still read it fresh rather than trust these numbers
+   verbatim — but don't re-flag it as an open question unless it's found in a state
+   nobody would recognize as deliberate. (Comparison is inclusive, `$today <= $endDate`
+   Eastern; "Import Now" bypasses both the window and the enabled flag; Event URL is the
+   `www.` host.)
 8. **No UI has automated coverage.** The regression suite is logic-only, so the Setup tab,
    Import Schedule, History tab, flyer feature, and the whole scheduled-task handshake were
    all verified by hand against the live 2026 event and nothing guards them against
