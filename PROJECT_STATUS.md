@@ -1,13 +1,22 @@
 # ETCC Vette Fest App — Project Status
 
-Last updated: 2026-09-13 (end of session). **Added a Backups panel to the Setup tab**
+Last updated: 2026-09-13 (end of a later session that day). **Both Setup tab schedule
+panels (Import Schedule, Backups) now auto-save** — every field saves itself on
+blur/change, no more Save button, prompted by a real UX gap found while auto-import
+times were being checked (a removed time only persisted on a separate Save click).
+Shipped v2.40 (`c3ba7b3`), checkpoint v2.41 (`fbc2695`). Not independently verified in a
+live browser session (only by build success + code review) — see "This session's work
+(2026-09-13 — Setup tab autosave)".
+
+Previous update: 2026-09-13 (end of session). **Added a Backups panel to the Setup tab**
 — a "Backup Now" button, a permanent color-coded run log, and an auto-backup schedule,
 ported from the sibling CarShow app and piggybacked on the existing Import Schedule poll
 (no new scheduled task needed). Shipped v2.37 (`cd5e482`), checkpoint v2.38 (`75760b0`).
 Verified directly against the live server (real backup run/list/download/delete/schedule
 round-trips) — **auto-backup is now enabled in production** as a side effect of that
-testing (window 2026-09-13→2026-10-13); see "This session's work (2026-09-13 — Backups
-panel)" for what that means and what still needs a human's eyes on it.
+testing (window 2026-09-13→2026-10-13); this was later confirmed visually and the
+schedule left to the user's own management — see "This session's work (2026-09-13 —
+Backups panel)" and the auto-import/auto-backup follow-ups below.
 
 Previous update: 2026-09-12 (end of a sixth session that day). **Deleted the stale
 `vettefest-sync-registrations` Claude Code scheduled task**, which had been left polling
@@ -103,14 +112,14 @@ automated coverage — all of it was verified by hand against the live 2026 even
 (see the session entries below). The count stays at 85 because none of that work touched
 `logic.js`.
 
-**Version:** `App/version.json` — stamped **2.38** in the currently-live
+**Version:** `App/version.json` — stamped **2.41** in the currently-live
 `App/ETCCVetteFest.html` / `app-bundle.html` on the server (built and deployed 2026-09-13
-14:30, checkpoint commit `75760b0`). The file itself now reads `{major:2, minor:39}`,
+14:54, checkpoint commit `fbc2695`). The file itself now reads `{major:2, minor:42}`,
 since `build.js` bumps-and-stores the *next* version on every run — the next build will
-stamp "2.39". **Gaps in the version sequence are normal, not lost work:** `build.js` bumps
+stamp "2.42". **Gaps in the version sequence are normal, not lost work:** `build.js` bumps
 on *every* run, including rebuilds that were never committed or deployed, which is why the
 shipped history reads 2.11, 2.12, 2.13, 2.15, 2.17, 2.18, 2.20, 2.22, 2.23, 2.27, 2.34,
-2.37, 2.38.
+2.37, 2.38, 2.40, 2.41.
 
 **Live URL:** https://etccapps.com/apps/vettefest/ — as of 2026-09-09, **the Developer
 password is the same as the site password** (`$DEV_PASSWORD_HASH` in `secrets.php` was set
@@ -187,6 +196,64 @@ copy.
 **Git: pushed and working**, as of 2026-08-27 — see that session's entry below for the
 one gotcha (a global credential helper that must be worked around on every push from this
 machine).
+
+## This session's work (2026-09-13 — Setup tab autosave)
+
+Removed the explicit "Save" button from both of the Setup tab's schedule panels (Import
+Schedule and the Backups auto-schedule) and made every field save itself, matching the
+pattern the Settings modal's `tshirtVendorEmail`/`tshirtOrderSubject` fields already used
+(`autoSaveSettings()`). Shipped as **v2.40** (`c3ba7b3`), checkpoint **v2.41** (`fbc2695`).
+
+### Why
+
+Earlier the same day, deleting one of the Import Schedule's explicit times (the ✕ button
+on a time row) only removed it from the DOM — the removal wasn't persisted to the server
+until someone separately clicked Save. Investigating that turned up no actual bug (the
+Save button, when clicked, already read the current DOM state correctly and the server's
+`array_merge()` already replaces `autoImportTimes` wholesale rather than appending to it —
+verified live by adding two times, removing one, and confirming a fresh `GET` showed only
+the one that remained). But the two-step "remove, then remember to Save" UX was real, and
+the user asked for it to autosave instead — which is what this session did, for both the
+Import Schedule and Backups panels, not just the times list.
+
+### What changed
+
+- **Import Schedule** (`buildImportScheduleSection()`): Event URL saves on `blur`; the
+  enable checkbox, both date fields, the interval `<select>`, and every explicit time
+  `<input type=time>` save on `change`. The ✕ remove button now calls
+  `autoSaveImportSchedule()` immediately after removing its row — the exact fix for the
+  scenario above, since a removed row can never fire its own blur/change again to trigger
+  a save some other way.
+- **Backups auto-schedule** (`buildAutoBackupFields()`): the enable checkbox and both date
+  fields save on `change`, same treatment.
+- **`saveImportScheduleSettings()`** and **`saveBackupSchedule()`** both dropped their
+  synchronous `renderViews()` call before the fetch — now wired to blur/change events that
+  can fire while someone is still tabbing through several fields, a full re-render would
+  tear down and rebuild every input on the page mid-Tab, same reasoning
+  `saveAppSettings()` already documented for the Settings modal. Only re-render once the
+  request settles (success or error).
+- Fixed a comment on the `importScheduleSaving` state default that had claimed Import
+  Schedule was "driven by an explicit Save button rather than per-field blur" — no longer
+  true.
+- The payload each save call builds is unchanged in shape from what the old Save button
+  sent — this only changed *when* a save fires, not what it saves.
+
+### Verification — and its limit
+
+`node build.js` succeeded (no JS syntax errors) and the page loaded with zero console
+errors against the local static server. Every new listener was grep-checked for being
+attached to the right element and calling the right handler, and the payload shape was
+confirmed unchanged.
+
+**What was not verified directly: an actual blur/change event firing in a real,
+authenticated browser session.** The local dev server has no PHP backend to open an event
+against, and logging into the live app's own login form to click through it falls under
+this harness's own prohibited-actions list (entering a password into a form) — a different
+category from the server-to-server API calls with the env-var password used everywhere
+else this session, which is why those continued to be used for the live backend testing
+earlier in the day instead. The user was asked to try it live (toggle a checkbox, add/
+remove a time, change a date) and confirm "Saving…" → "Saved." appears with no button —
+their answer was not on record when this session ended.
 
 ## This session's work (2026-09-13 — Backups panel)
 
@@ -1095,6 +1162,14 @@ having the token; see that section and "Known follow-ups" for the exact command.
     schedule as an open item unless a future session finds it in a state nobody
     deliberately set (e.g. re-enabled after being turned off with no corresponding user
     action).
+12. **Setup tab autosave (v2.40) has not been confirmed in a live, logged-in browser
+    session** — only by `node build.js` succeeding, a zero-console-error load against the
+    local static server (which has no backend to actually save against), and code review
+    (every listener grep-checked for being attached to the right element/handler). The
+    user was asked to try it live (toggle a checkbox, add/remove a time, change a date;
+    confirm "Saving…" → "Saved." with no button) but hadn't answered by the time this
+    session ended. If a future session needs to know whether autosave actually works
+    end-to-end, ask rather than assume either way.
 
 ## Architecture notes worth preserving
 
