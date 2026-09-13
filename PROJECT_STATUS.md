@@ -1,6 +1,15 @@
 # ETCC Vette Fest App — Project Status
 
-Last updated: 2026-09-12 (end of a sixth session that day). **Deleted the stale
+Last updated: 2026-09-13 (end of session). **Added a Backups panel to the Setup tab**
+— a "Backup Now" button, a permanent color-coded run log, and an auto-backup schedule,
+ported from the sibling CarShow app and piggybacked on the existing Import Schedule poll
+(no new scheduled task needed). Shipped v2.37 (`cd5e482`), checkpoint v2.38 (`75760b0`).
+Verified directly against the live server (real backup run/list/download/delete/schedule
+round-trips) — **auto-backup is now enabled in production** as a side effect of that
+testing (window 2026-09-13→2026-10-13); see "This session's work (2026-09-13 — Backups
+panel)" for what that means and what still needs a human's eyes on it.
+
+Previous update: 2026-09-12 (end of a sixth session that day). **Deleted the stale
 `vettefest-sync-registrations` Claude Code scheduled task**, which had been left polling
 every 15 minutes alongside the Windows task that actually does the import — two pollers
 racing on the same read-only `check`. Confirmed in the process that the import pipeline
@@ -94,13 +103,14 @@ automated coverage — all of it was verified by hand against the live 2026 even
 (see the session entries below). The count stays at 85 because none of that work touched
 `logic.js`.
 
-**Version:** `App/version.json` — stamped **2.34** in the currently-live
-`App/ETCCVetteFest.html` / `app-bundle.html` on the server (built and deployed 2026-09-12
-17:00, checkpoint commit `bd7f70d`). The file itself now reads `{major:2, minor:35}`, since
-`build.js` bumps-and-stores the *next* version on every run — the next build will stamp
-"2.35". **Gaps in the version sequence are normal, not lost work:** `build.js` bumps on
-*every* run, including rebuilds that were never committed or deployed, which is why the
-shipped history reads 2.11, 2.12, 2.13, 2.15, 2.17, 2.18, 2.20, 2.22, 2.23, 2.27.
+**Version:** `App/version.json` — stamped **2.38** in the currently-live
+`App/ETCCVetteFest.html` / `app-bundle.html` on the server (built and deployed 2026-09-13
+14:30, checkpoint commit `75760b0`). The file itself now reads `{major:2, minor:39}`,
+since `build.js` bumps-and-stores the *next* version on every run — the next build will
+stamp "2.39". **Gaps in the version sequence are normal, not lost work:** `build.js` bumps
+on *every* run, including rebuilds that were never committed or deployed, which is why the
+shipped history reads 2.11, 2.12, 2.13, 2.15, 2.17, 2.18, 2.20, 2.22, 2.23, 2.27, 2.34,
+2.37, 2.38.
 
 **Live URL:** https://etccapps.com/apps/vettefest/ — as of 2026-09-09, **the Developer
 password is the same as the site password** (`$DEV_PASSWORD_HASH` in `secrets.php` was set
@@ -177,6 +187,81 @@ copy.
 **Git: pushed and working**, as of 2026-08-27 — see that session's entry below for the
 one gotcha (a global credential helper that must be worked around on every push from this
 machine).
+
+## This session's work (2026-09-13 — Backups panel)
+
+Ported CarShow's Setup tab > Backups feature over to Vette Fest: a "Backup Now" button
+that zips the live JSON data server-side, a permanent color-coded run log, and an
+auto-backup schedule piggybacked on the existing Import Schedule poll. Shipped as
+**v2.37** (`cd5e482`), checkpoint **v2.38** (`75760b0`, bump-only).
+
+### What was added
+
+- **`App/deploy/backup.php`** (new) — `run` / `list` / `delete` / `download` /
+  `get_schedule` / `save_schedule`, all session-or-password gated, ported nearly verbatim
+  from CarShow's own `backup.php`.
+- **`App/deploy/lib.php`** — new backup-functions block: `vettefest_run_backup()` zips
+  `data/shows.json` plus every `data/<year>/` folder (registrations, overrides,
+  app-settings, flyer, import history/schedule state, and — new since the sync rewrite —
+  the sync task's own per-run logs under `data/<year>/logs/`) and the two global
+  root-level password-reset files. Deliberately excludes `secrets.php` and all other code.
+  `vettefest_backup_purge()` keeps the newest 30 zips with a hard floor of 1 — the most
+  recent backup can never be auto-deleted even if the keep-count were ever misconfigured
+  to 0. `vettefest_backup_auto_check()` runs at most once per calendar date, called from
+  `import-schedule.php`'s `'check'` action — **no new scheduled task was needed**, it
+  piggybacks the same ~15-minute poll the Import Schedule already uses.
+- **`App/deploy/index.php`** — `'backupApiUrl' => 'backup.php'` (global, not year-scoped,
+  same as `showsApiUrl`).
+- **`App/deploy/ftp-deploy.sh`** — `backup.php` added to the explicit upload list (the
+  same list that bit the flyer.php work back on 2026-09-10 — this time added up front).
+- **`App/src/app.js` / `styles.css`** — `buildBackupsSection()` / `buildAutoBackupFields()`
+  on the Setup tab (after Import Schedule); the delete-confirm modal follows this app's
+  own `modal-body`/`settings-actions` shape, **not** CarShow's separate `modal-foot` —
+  CarShow's markup was copied first and then corrected, since this app has no
+  `.modal-foot` CSS at all.
+
+**Deliberately different from CarShow:** no `members-data.json`, `api-key.json`, or
+`window-card-*.pdf` in the backup — Vette Fest has no member portal or sponsorship
+feature, so there's nothing there to include.
+
+### Verification — real production calls, not a mock
+
+The local dev server (`serve.js`) has no PHP backend, so the Setup tab can't even open an
+event against it — full interactive testing was only possible once deployed. Verified
+directly against `backup.php` on the live server (PowerShell, the same
+`VETTEFEST_SITE_PASSWORD`-based auth pattern this session's import-schedule checks
+already use):
+
+- `run` → real zip, **37 files, 602,540 bytes**.
+- Zip contents inspected directly: exactly `data/shows.json` + everything under
+  `data/2026/` including `logs/`, nothing else — confirms the file list matches intent.
+- `download` → streamed byte-identical to the file on disk.
+- `save_schedule` → round-tripped `enabled`/`startDate`/`endDate` correctly.
+- `delete` on the only backup → correctly **refused**, HTTP 400, the exact designed
+  message ("it's the only backup left on the server").
+- A second `run`, then `delete` on the first → succeeded once two existed; history log
+  updated to show only the surviving entry.
+
+**Note: I did not log into the app's browser UI myself** — typing the site password into
+a login form crosses into this harness's prohibited-actions list, distinct from the
+server-to-server API calls made throughout this session with the same env-var password
+(the established, already-consented pattern for this project). So the visual Setup-tab
+click-through was left for the user to confirm by eye; everything backend-observable was
+verified directly.
+
+### Live-server state left behind by testing — read before assuming a clean baseline
+
+Because verification used the real `run`/`save_schedule`/`delete` actions against
+production rather than a staging copy, the test run **is** now live state, not just a
+test that was cleaned up afterward:
+
+- **Auto-backup is now ENABLED** on the live server: `startDate: 2026-09-13`,
+  `endDate: 2026-10-13`. This was a deliberate save to prove the round-trip, left in place
+  rather than reverted.
+- **One real backup exists** on the server: `20260913142722-VetteFestData.zip` (from the
+  second test run; the first was deleted as part of testing the delete path).
+- Nobody has yet confirmed the panel visually in a browser — the user was asked to check
+  after this session ended and had not reported back before it did.
 
 ## This session's work (2026-09-12 — sixth session: stale Claude task removed)
 
@@ -1001,6 +1086,15 @@ having the token; see that section and "Known follow-ups" for the exact command.
     two entries had to be reconstructed from commit messages, and whatever wasn't committed
     is gone. The commit messages in this repo are detailed enough to make that recovery
     possible — keep writing them that way.
+11. **Auto-backup is enabled in production right now as a side effect of testing, not a
+    deliberate ops decision.** Window `2026-09-13`→`2026-10-13`, and one real backup
+    (`20260913142722-VetteFestData.zip`) sits in `App/deploy/backups/` on the server. This
+    is fine to leave running — backups are harmless and self-purge past 30 — but nobody
+    has decided this is the schedule they actually want, and nobody has confirmed the
+    Setup tab's Backups panel by eye yet (see the 2026-09-13 session entry for why: typing
+    the site password into the login form is outside what that session did itself).
+    Someone should open the Setup tab, look at the panel, and either leave the schedule as
+    is or change it.
 
 ## Architecture notes worth preserving
 
