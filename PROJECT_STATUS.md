@@ -1086,15 +1086,14 @@ having the token; see that section and "Known follow-ups" for the exact command.
     two entries had to be reconstructed from commit messages, and whatever wasn't committed
     is gone. The commit messages in this repo are detailed enough to make that recovery
     possible — keep writing them that way.
-11. **Auto-backup is enabled in production right now as a side effect of testing, not a
-    deliberate ops decision.** Window `2026-09-13`→`2026-10-13`, and one real backup
-    (`20260913142722-VetteFestData.zip`) sits in `App/deploy/backups/` on the server. This
-    is fine to leave running — backups are harmless and self-purge past 30 — but nobody
-    has decided this is the schedule they actually want, and nobody has confirmed the
-    Setup tab's Backups panel by eye yet (see the 2026-09-13 session entry for why: typing
-    the site password into the login form is outside what that session did itself).
-    Someone should open the Setup tab, look at the panel, and either leave the schedule as
-    is or change it.
+11. **The Backups panel was confirmed visually in the browser on 2026-09-13** (same
+    day, after the session that built and API-tested it) — so the one open item from that
+    entry (nobody had actually looked at the Setup tab) is closed. **Still open:**
+    auto-backup is enabled in production with the window `2026-09-13`→`2026-10-13` purely
+    as a side effect of that session's API testing, not a deliberate ops decision —
+    nobody has yet said this is the schedule they actually want kept, changed, or turned
+    off. Harmless to leave as-is (backups are inert and self-purge past 30), but it's a
+    decision still waiting on the user, not a fact to keep restating as new.
 
 ## Architecture notes worth preserving
 
