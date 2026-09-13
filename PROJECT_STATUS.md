@@ -1086,14 +1086,14 @@ having the token; see that section and "Known follow-ups" for the exact command.
     two entries had to be reconstructed from commit messages, and whatever wasn't committed
     is gone. The commit messages in this repo are detailed enough to make that recovery
     possible — keep writing them that way.
-11. **The Backups panel was confirmed visually in the browser on 2026-09-13** (same
-    day, after the session that built and API-tested it) — so the one open item from that
-    entry (nobody had actually looked at the Setup tab) is closed. **Still open:**
-    auto-backup is enabled in production with the window `2026-09-13`→`2026-10-13` purely
-    as a side effect of that session's API testing, not a deliberate ops decision —
-    nobody has yet said this is the schedule they actually want kept, changed, or turned
-    off. Harmless to leave as-is (backups are inert and self-purge past 30), but it's a
-    decision still waiting on the user, not a fact to keep restating as new.
+11. **The Backups panel was confirmed visually in the browser on 2026-09-13.** The
+    auto-backup schedule left enabled by that session's API testing
+    (`2026-09-13`→`2026-10-13`) was raised with the user as an open decision the same
+    day; they chose to manage that schedule themselves directly in the Setup tab rather
+    than have it changed here. **Nothing further to track from this** — don't re-flag the
+    schedule as an open item unless a future session finds it in a state nobody
+    deliberately set (e.g. re-enabled after being turned off with no corresponding user
+    action).
 
 ## Architecture notes worth preserving
 
