@@ -288,6 +288,12 @@ th.pinned { z-index: 3; }
 .test-list li.fail { color: var(--warn); background: #fff5f5; }
 .test-list .expect { color: var(--muted); font-size: 11px; margin-top: 2px; }
 
+/* Setup tab > Backups log (table.grid rows) — color-coded per run outcome,
+   same idea as .test-list li.pass/.fail above: green text for a success,
+   red text plus a light red tint for a failure. */
+table.grid tr.backup-row-ok td { color: var(--good); }
+table.grid tr.backup-row-fail td { color: var(--warn); background: #fff5f5; }
+
 /* change log — a full page (SilentAuctionManager's Change Log is a full
    nav "screen", not a dialog), not a centered modal like Settings. Fixed,
    covers the whole viewport, above the hamburger drawer (z-index 200). */

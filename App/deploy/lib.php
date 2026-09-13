@@ -451,3 +451,180 @@ function vettefest_show_files() {
         'import-run-status.json'
     ];
 }
+
+// ---------------------------------------------------------------------------
+// Backups (Setup tab > Backups; see backup.php)
+// ---------------------------------------------------------------------------
+// Ported from the sibling CarShow app's own backup.php/lib.php pair — same
+// mechanics, adapted to Vette Fest's own data shape (see vettefest_run_backup()
+// below for exactly what that means). Shared here (rather than living only in
+// backup.php) so import-schedule.php can call vettefest_backup_auto_check()
+// from its own 'check' action without requiring the whole of backup.php
+// (which would also execute that file's top-level action dispatch).
+
+// Keep at most this many zip files on disk — see vettefest_backup_purge().
+define('VETTEFEST_BACKUP_KEEP', 30);
+
+// backups/ itself. Created on demand, deny-all like every other data
+// directory in this app — defense in depth even though every caller already
+// gates on vettefest_authed() before reaching any of this.
+function vettefest_backups_dir() {
+    $dir = __DIR__ . '/backups';
+    if (!is_dir($dir) && !@mkdir($dir, 0755, true) && !is_dir($dir)) return null;
+    $deny = $dir . '/.htaccess';
+    if (!is_file($deny)) {
+        @file_put_contents($deny,
+            "<IfModule mod_authz_core.c>\n  Require all denied\n</IfModule>\n" .
+            "<IfModule !mod_authz_core.c>\n  Order allow,deny\n  Deny from all\n</IfModule>\n");
+    }
+    return $dir;
+}
+
+function vettefest_backup_history_file() {
+    $dir = vettefest_backups_dir();
+    return $dir === null ? null : $dir . '/backup-history.json';
+}
+
+// Global (not per-year) auto-backup settings: { enabled, startDate, endDate,
+// lastAutoRunDate }. Lives under data/ alongside shows.json — see
+// vettefest_data_root() — since backups span every event year, not one.
+function vettefest_backup_schedule_path() {
+    $root = vettefest_data_root();
+    return $root === null ? null : $root . '/backup-schedule.json';
+}
+function vettefest_read_backup_schedule() {
+    $path = vettefest_backup_schedule_path();
+    $raw = ($path !== null && is_file($path)) ? json_decode(file_get_contents($path), true) : null;
+    $s = is_array($raw) ? $raw : [];
+    return [
+        'enabled' => !empty($s['enabled']),
+        'startDate' => (string)($s['startDate'] ?? ''),
+        'endDate' => (string)($s['endDate'] ?? ''),
+        // Server-owned bookkeeping (see vettefest_backup_auto_check()) — a
+        // save from the Setup tab must preserve this, never set it directly.
+        'lastAutoRunDate' => (string)($s['lastAutoRunDate'] ?? ''),
+    ];
+}
+function vettefest_write_backup_schedule($schedule) {
+    $path = vettefest_backup_schedule_path();
+    return $path === null ? false : vettefest_write_json($path, $schedule);
+}
+
+// Adds every file under $dir to $zip, recursively, nested under $zipPrefix
+// inside the archive (so the whole data/ tree lands at "data/..." in the
+// zip, exactly matching its layout on the server).
+function vettefest_zip_add_dir($zip, $dir, $zipPrefix) {
+    if (!is_dir($dir)) return;
+    $items = new RecursiveIteratorIterator(
+        new RecursiveDirectoryIterator($dir, FilesystemIterator::SKIP_DOTS),
+        RecursiveIteratorIterator::LEAVES_ONLY
+    );
+    foreach ($items as $item) {
+        $relative = substr($item->getPathname(), strlen($dir) + 1);
+        $zipPath = str_replace('\\', '/', $zipPrefix . '/' . $relative);
+        $zip->addFile($item->getPathname(), $zipPath);
+    }
+}
+
+// Keeps only the newest $keep zip files on disk (oldest deleted first).
+// max(1, ...) is a hard floor, independent of whatever VETTEFEST_BACKUP_KEEP
+// happens to be set to: the most recent backup is NEVER deleted, so the
+// server is never left with zero backups even if that constant were ever
+// misconfigured to 0.
+function vettefest_backup_purge($dir, $keep) {
+    $keep = max(1, (int)$keep);
+    $files = glob($dir . '/*.zip') ?: [];
+    if (count($files) <= $keep) return;
+    usort($files, function ($a, $b) { return filemtime($a) - filemtime($b); });
+    foreach (array_slice($files, 0, count($files) - $keep) as $f) @unlink($f);
+}
+
+// How many backup zip files currently exist on disk — shared by
+// vettefest_backup_purge() (via its own glob) and backup.php's 'delete'
+// action, which uses this to refuse deleting the very last one (same "never
+// leave zero backups" guarantee vettefest_backup_purge()'s max(1, ...) floor
+// gives the automatic purge).
+function vettefest_backup_zip_count($dir) {
+    return count(glob($dir . '/*.zip') ?: []);
+}
+
+// Does the actual backup: zips the whole data/ tree (data/shows.json plus
+// every data/<year>/ folder — registrations, overrides, app-settings, flyer,
+// import history/schedule state, and the sync task's own per-run logs under
+// data/<year>/logs/) and the two global root-level password-reset files that
+// live outside data/ (see the comment on vettefest_show_files() for why
+// those are global, not per-event). Deliberately EXCLUDES secrets.php and
+// every other code file — same scope ftp-deploy.sh's own upload list
+// excludes for the opposite reason (never overwrite live data with a stale
+// local copy); this is a data backup, not a code backup. Unlike CarShow,
+// there is no members-data.json, api-key.json or window-card-*.pdf here —
+// Vette Fest has no member portal and no sponsorship feature.
+function vettefest_run_backup() {
+    $dir = vettefest_backups_dir();
+    if ($dir === null) return ['ok' => false, 'error' => 'Could not create the backups directory.'];
+
+    $fileName = gmdate('YmdHis') . '-VetteFestData.zip';
+    $zipPath = $dir . '/' . $fileName;
+
+    $zip = new ZipArchive();
+    if ($zip->open($zipPath, ZipArchive::CREATE | ZipArchive::OVERWRITE) !== true) {
+        return ['ok' => false, 'error' => 'Could not create the backup zip file.'];
+    }
+
+    $dataRoot = vettefest_data_root();
+    if ($dataRoot !== null) vettefest_zip_add_dir($zip, $dataRoot, 'data');
+
+    foreach (['password-reset.json', 'dev-password-reset.json'] as $name) {
+        $path = __DIR__ . '/' . $name;
+        if (is_file($path)) $zip->addFile($path, $name);
+    }
+
+    $numFiles = $zip->numFiles;
+    $zip->close();
+
+    if ($numFiles === 0) {
+        @unlink($zipPath);
+        return ['ok' => false, 'error' => 'Nothing to back up — no data files were found on the server.'];
+    }
+
+    vettefest_backup_purge($dir, VETTEFEST_BACKUP_KEEP);
+    clearstatcache(true, $zipPath);
+    return ['ok' => true, 'fileName' => $fileName, 'sizeBytes' => filesize($zipPath), 'fileCount' => $numFiles];
+}
+
+// Called from import-schedule.php's 'check' action, which is already polled
+// every ~15 minutes by the Windows Task Scheduler task regardless of whether
+// anyone has the app open in a browser — piggybacking on that existing
+// heartbeat means a daily backup needs no scheduled task of its own. Runs at
+// most once per calendar date (server's current default timezone — see
+// import-schedule.php's date_default_timezone_set('America/New_York'), which
+// is already in effect by the time this is called from there): the first
+// poll on/after midnight that finds today's date not yet recorded, so "at
+// midnight" in practice means within ~15 minutes after it, the same
+// approximation the Import Schedule's own explicit times already make.
+// Attempts exactly once per day regardless of outcome (lastAutoRunDate is set
+// whether the run succeeded or failed) — a persistently failing backup (e.g.
+// disk full) should surface once a day in the log, not spam a retry every 15
+// minutes until fixed.
+function vettefest_backup_auto_check() {
+    $schedule = vettefest_read_backup_schedule();
+    if (!$schedule['enabled']) return;
+    $today = date('Y-m-d');
+    if ($schedule['startDate'] !== '' && $today < $schedule['startDate']) return;
+    if ($schedule['endDate'] !== '' && $today > $schedule['endDate']) return;
+    if ($schedule['lastAutoRunDate'] === $today) return;
+
+    $result = vettefest_run_backup();
+    $entry = ['timestamp' => gmdate('c'), 'status' => $result['ok'] ? 'success' : 'failed', 'reason' => 'auto'];
+    if ($result['ok']) {
+        $entry['fileName'] = $result['fileName'];
+        $entry['sizeBytes'] = $result['sizeBytes'];
+        $entry['fileCount'] = $result['fileCount'];
+    } else {
+        $entry['error'] = $result['error'];
+    }
+    vettefest_append_json_list(vettefest_backup_history_file(), $entry);
+
+    $schedule['lastAutoRunDate'] = $today;
+    vettefest_write_backup_schedule($schedule);
+}

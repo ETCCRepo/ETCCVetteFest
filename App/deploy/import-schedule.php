@@ -154,6 +154,13 @@ if ($action === 'check') {
     $reason = 'none';
     $today = date('Y-m-d');
 
+    // Piggyback the auto-backup schedule on this same poll — see that
+    // function's own comment in lib.php for why. Unrelated to imports and
+    // not year-scoped (backups span every event), so this runs regardless of
+    // which $year's check endpoint happened to be hit, and is a no-op once
+    // today's backup has already run.
+    vettefest_backup_auto_check();
+
     if ($pending) {
         $shouldRun = true;
         $reason = 'manual';
