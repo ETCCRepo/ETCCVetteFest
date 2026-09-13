@@ -1162,14 +1162,10 @@ having the token; see that section and "Known follow-ups" for the exact command.
     schedule as an open item unless a future session finds it in a state nobody
     deliberately set (e.g. re-enabled after being turned off with no corresponding user
     action).
-12. **Setup tab autosave (v2.40) has not been confirmed in a live, logged-in browser
-    session** — only by `node build.js` succeeding, a zero-console-error load against the
-    local static server (which has no backend to actually save against), and code review
-    (every listener grep-checked for being attached to the right element/handler). The
-    user was asked to try it live (toggle a checkbox, add/remove a time, change a date;
-    confirm "Saving…" → "Saved." with no button) but hadn't answered by the time this
-    session ended. If a future session needs to know whether autosave actually works
-    end-to-end, ask rather than assume either way.
+12. **Setup tab autosave (v2.40) was confirmed live by the user on 2026-09-13** —
+    toggling a checkbox, adding/removing a time, and changing a date all show "Saving…"
+    → "Saved." with no button, in a real logged-in browser session. Nothing further to
+    track from this.
 
 ## Architecture notes worth preserving
 
