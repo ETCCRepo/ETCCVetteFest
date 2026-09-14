@@ -1,6 +1,12 @@
 # ETCC Vette Fest App — Project Status
 
-Last updated: 2026-09-13 (end of a later session that day). **Both Setup tab schedule
+Last updated: 2026-09-14 (end of session). **No app code changed.** The
+`/ETCCVetteFestBackup` skill now writes **two** zips per run to `Z:\Backup\websites\VF\Backup`
+(live `data/` tree + the whole local repo folder, same timestamp, no log file), and a
+bump-only checkpoint shipped v2.42 (`7d03767`). See "This session's work (2026-09-14 —
+backup skill)".
+
+Previous update: 2026-09-13 (end of a later session that day). **Both Setup tab schedule
 panels (Import Schedule, Backups) now auto-save** — every field saves itself on
 blur/change, no more Save button, prompted by a real UX gap found while auto-import
 times were being checked (a removed time only persisted on a separate Save click).
@@ -112,11 +118,11 @@ automated coverage — all of it was verified by hand against the live 2026 even
 (see the session entries below). The count stays at 85 because none of that work touched
 `logic.js`.
 
-**Version:** `App/version.json` — stamped **2.41** in the currently-live
-`App/ETCCVetteFest.html` / `app-bundle.html` on the server (built and deployed 2026-09-13
-14:54, checkpoint commit `fbc2695`). The file itself now reads `{major:2, minor:42}`,
+**Version:** `App/version.json` — stamped **2.42** in the currently-live
+`App/ETCCVetteFest.html` / `app-bundle.html` on the server (built and deployed 2026-09-14
+09:21, checkpoint commit `7d03767`). The file itself now reads `{major:2, minor:43}`,
 since `build.js` bumps-and-stores the *next* version on every run — the next build will
-stamp "2.42". **Gaps in the version sequence are normal, not lost work:** `build.js` bumps
+stamp "2.43". **Gaps in the version sequence are normal, not lost work:** `build.js` bumps
 on *every* run, including rebuilds that were never committed or deployed, which is why the
 shipped history reads 2.11, 2.12, 2.13, 2.15, 2.17, 2.18, 2.20, 2.22, 2.23, 2.27, 2.34,
 2.37, 2.38, 2.40, 2.41.
@@ -196,6 +202,29 @@ copy.
 **Git: pushed and working**, as of 2026-08-27 — see that session's entry below for the
 one gotcha (a global credential helper that must be worked around on every push from this
 machine).
+
+## This session's work (2026-09-14 — backup skill)
+
+No changes to the app or this repo's source — the work was in the user-level skill
+`C:\Users\Admin\.claude\skills\ETCCVetteFestBackup\SKILL.md` (outside git).
+
+- **User asked** to back up to `Z:\Backup\websites\VF\Backup` with no log file. The
+  skill already did exactly that; only its notes were changed to record the destination
+  as user-confirmed and "no log file" as a standing instruction.
+- **User then asked for a zip of DB & repo.** The skill now produces, from one shared
+  timestamp: `<yyyyMMddHHmm>-VetteFestData.zip` (the live server's `data/` tree over FTPS,
+  unchanged) and `<yyyyMMddHHmm>-VetteFestRepo.zip` (the whole local repo folder via
+  `System.IO.Compression.ZipFile`, **nothing excluded** — node_modules and `.git`
+  included — mirroring `ETCCSAMBackup`). **The repo zip contains credentials** that git
+  ignores but that live in the working tree: `App/deploy/secrets.php`,
+  `App/deploy/.ftp-credentials`, `.git/etccrepo-credentials`. The skill warns not to copy
+  it anywhere shared.
+- **Verified:** runs produced `202609140901-VetteFestData.zip` (619 KB), a test
+  `202609140909-VetteFestRepo.zip` (22.5 MB, 4,302 entries, spot-checked), and a full
+  pair `202609140915-VetteFestData.zip` (620 KB) + `202609140915-VetteFestRepo.zip`
+  (22.5 MB).
+- **Checkpoint:** tests 85/85, built and deployed **v2.42**, commit `7d03767`
+  (build artifacts only).
 
 ## This session's work (2026-09-13 — Setup tab autosave)
 
