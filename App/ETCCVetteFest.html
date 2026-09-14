@@ -557,7 +557,7 @@ table.report-preview-table th, table.report-preview-table td { font-size: 10px; 
   <div id="app"></div>
 </div>
 <footer class="app-footer">
-  <div class="footer-line"><span>v2.49 &middot; Deployed 09/14/2026 03:29 PM</span> &middot; <span>Website by Business Web Express &middot; <a href="https://businesswebexpress.com" target="_blank" rel="noopener">businesswebexpress.com</a></span> &middot; <span>&copy; 2026 East Tennessee Corvette Club &middot; Knoxville, TN &middot; <a href="mailto:etccwebsite.webmanager@gmail.com">etccwebsite.webmanager@gmail.com</a></span></div>
+  <div class="footer-line"><span>v2.50 &middot; Deployed 09/14/2026 03:52 PM</span> &middot; <span>Website by Business Web Express &middot; <a href="https://businesswebexpress.com" target="_blank" rel="noopener">businesswebexpress.com</a></span> &middot; <span>&copy; 2026 East Tennessee Corvette Club &middot; Knoxville, TN &middot; <a href="mailto:etccwebsite.webmanager@gmail.com">etccwebsite.webmanager@gmail.com</a></span></div>
 </footer>
 <script>
 /* @license
@@ -4804,17 +4804,50 @@ window.__vettefestReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQ
   function genReportCell(spec, row, c) {
     return el("td", { class: c.cls || "", text: spec.cellText(row, c.key) });
   }
+  // Multi-column sort: an ordered list of levels ({ key, dir: 1 | -1 }) —
+  // "sort by Size, then Last Name, then First Name". Saved as
+  // <id>ReportSorts ([{ key, dir: "asc"|"desc" }]). A layout saved before
+  // multi-sort existed only has <id>ReportSortCol/SortDir, so an empty
+  // Sorts list falls back to that single level (genReportSortSpec()).
+  // Levels naming a column no longer in the report are dropped, as are
+  // duplicates; there is always at least one level.
+  function genReportSortLevels(spec) {
+    var cols = genReportColumns(spec);
+    var inReport = function (k) { return cols.some(function (c) { return c.key === k; }); };
+    var saved = state.appSettings[spec.id + "ReportSorts"];
+    var levels = [], seen = {};
+    if (Array.isArray(saved)) {
+      saved.forEach(function (lv) {
+        if (!lv || !inReport(lv.key) || seen[lv.key]) return;
+        seen[lv.key] = true;
+        levels.push({ key: lv.key, dir: lv.dir === "desc" ? -1 : 1 });
+      });
+    }
+    return levels.length ? levels : [genReportSortSpec(spec)];
+  }
   function genReportSorted(spec) {
-    var s = genReportSortSpec(spec);
+    var levels = genReportSortLevels(spec);
     return spec.getRows().slice().sort(function (a, b) {
-      var av = spec.sortValue(a, s.key), bv = spec.sortValue(b, s.key);
-      if (av < bv) return -s.dir;
-      if (av > bv) return s.dir;
-      // Ties break by Reg # so grouped sorts (e.g. Gen) stay in a stable,
+      for (var i = 0; i < levels.length; i++) {
+        var lv = levels[i];
+        var av = spec.sortValue(a, lv.key), bv = spec.sortValue(b, lv.key);
+        if (av < bv) return -lv.dir;
+        if (av > bv) return lv.dir;
+      }
+      // Final tiebreak by Reg # so grouped sorts (e.g. Gen) stay in a stable,
       // readable order — the old Car Show Report sorted Gen then Reg #.
       var ar = String(a["Reg #"] || ""), br = String(b["Reg #"] || "");
       return ar < br ? -1 : ar > br ? 1 : 0;
     });
+  }
+  // Persists a full level list. Also mirrors the first level into the legacy
+  // SortCol/SortDir keys, so they never contradict what's on screen.
+  function saveGenReportSortLevels(spec, levels) {
+    var patch = {};
+    patch[spec.id + "ReportSorts"] = levels.map(function (lv) { return { key: lv.key, dir: lv.dir === -1 ? "desc" : "asc" }; });
+    patch[spec.id + "ReportSortCol"] = levels[0].key;
+    patch[spec.id + "ReportSortDir"] = levels[0].dir === -1 ? "desc" : "asc";
+    saveGenReportLayout(spec, patch);
   }
   function saveGenReportLayout(spec, patch) {
     Object.keys(patch).forEach(function (k) { state.appSettings[k] = patch[k]; });
@@ -4985,21 +5018,54 @@ window.__vettefestReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQ
       selectedList
     ]);
 
-    var sortSpec = genReportSortSpec(spec);
-    var sortSel = el("select", {});
-    selected.forEach(function (c) { sortSel.appendChild(el("option", { value: c.key, text: c.label })); });
-    sortSel.value = sortSpec.key;
-    sortSel.addEventListener("change", function () {
-      var patch = {}; patch[spec.id + "ReportSortCol"] = sortSel.value;
-      saveGenReportLayout(spec, patch);
+    // One row per sort level: "Sort by" then "Then by" rows, each with its own
+    // column + direction and a ✕ (except when it's the only level). A column
+    // can appear in only one level, so each picker omits columns other levels
+    // already use. Sortable columns are the ones in the report.
+    var levels = genReportSortLevels(spec);
+    var sortRows = levels.map(function (lv, idx) {
+      var usedElsewhere = {};
+      levels.forEach(function (o, j) { if (j !== idx) usedElsewhere[o.key] = true; });
+      var colSel = el("select", {});
+      selected.forEach(function (c) {
+        if (!usedElsewhere[c.key]) colSel.appendChild(el("option", { value: c.key, text: c.label }));
+      });
+      colSel.value = lv.key;
+      colSel.addEventListener("change", function () {
+        var next = levels.map(function (o) { return { key: o.key, dir: o.dir }; });
+        next[idx].key = colSel.value;
+        saveGenReportSortLevels(spec, next);
+      });
+      var dirSel = el("select", {});
+      dirSel.appendChild(el("option", { value: "asc", text: "Ascending" }));
+      dirSel.appendChild(el("option", { value: "desc", text: "Descending" }));
+      dirSel.value = lv.dir === -1 ? "desc" : "asc";
+      dirSel.addEventListener("change", function () {
+        var next = levels.map(function (o) { return { key: o.key, dir: o.dir }; });
+        next[idx].dir = dirSel.value === "desc" ? -1 : 1;
+        saveGenReportSortLevels(spec, next);
+      });
+      var controls = [colSel, dirSel];
+      if (levels.length > 1) {
+        var rmBtn = el("button", { type: "button", class: "btn", style: "padding:1px 7px; font-size:12px", title: "Remove this sort level" }, ["✕"]);
+        rmBtn.addEventListener("click", function () {
+          saveGenReportSortLevels(spec, levels.filter(function (o, j) { return j !== idx; }));
+        });
+        controls.push(rmBtn);
+      }
+      return el("div", { class: "form-row", style: idx === 0 ? "margin-top:14px" : "" }, [
+        el("span", { class: "form-label", text: idx === 0 ? "Sort by" : "Then by" }),
+        el("div", { style: "display:flex; gap:8px; align-items:center; flex-wrap:wrap" }, controls)
+      ]);
     });
-    var dirSel = el("select", {});
-    dirSel.appendChild(el("option", { value: "asc", text: "Ascending" }));
-    dirSel.appendChild(el("option", { value: "desc", text: "Descending" }));
-    dirSel.value = sortSpec.dir === -1 ? "desc" : "asc";
-    dirSel.addEventListener("change", function () {
-      var patch = {}; patch[spec.id + "ReportSortDir"] = dirSel.value;
-      saveGenReportLayout(spec, patch);
+    var usedKeys = {};
+    levels.forEach(function (o) { usedKeys[o.key] = true; });
+    var nextCol = selected.filter(function (c) { return !usedKeys[c.key]; })[0];
+    var addSortBtn = el("button", { type: "button", class: "btn", style: "font-size:12px; padding:4px 10px" }, ["+ Add sort level"]);
+    if (!nextCol) addSortBtn.disabled = true;
+    addSortBtn.addEventListener("click", function () {
+      if (!nextCol) return;
+      saveGenReportSortLevels(spec, levels.concat([{ key: nextCol.key, dir: 1 }]));
     });
 
     var resetBtn = el("button", { type: "button", class: "btn", style: "font-size:12px; padding:4px 10px" }, ["↺ Reset to Default"]);
@@ -5008,6 +5074,7 @@ window.__vettefestReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQ
       patch[spec.id + "ReportColumns"] = spec.defaultKeys.slice();
       patch[spec.id + "ReportSortCol"] = spec.defaultSortKey;
       patch[spec.id + "ReportSortDir"] = "asc";
+      patch[spec.id + "ReportSorts"] = [];
       saveGenReportLayout(spec, patch);
     });
 
@@ -5019,12 +5086,10 @@ window.__vettefestReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQ
         "\"In Report\" to change their print order. Changes save automatically and apply to every printed copy."
       ]),
       el("div", { class: "report-col-panels" }, [availablePanel, selectedPanel]),
-      el("div", { class: "form-row", style: "margin-top:14px" }, [
-        el("span", { class: "form-label", text: "Sort by" }),
-        el("div", { style: "display:flex; gap:8px; align-items:center; flex-wrap:wrap" }, [sortSel, dirSel])
-      ]),
+    ].concat(sortRows).concat([
+      el("div", { class: "form-row" }, [el("span", { class: "form-label", text: "" }), addSortBtn]),
       el("div", { class: "settings-actions" }, [resetBtn])
-    ]);
+    ]));
     var openKey = spec.id + "ReportBuilderOpen";
     var isOpen = !!state[openKey];
     body.hidden = !isOpen;
