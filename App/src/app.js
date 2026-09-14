@@ -95,6 +95,19 @@
     deleteBackupConfirm: null, // timestamp of the backup log entry pending delete confirm, or null
     deleteBackupError: null,   // e.g. "it's the only backup left" — shown in the confirm modal
 
+    // Setup tab > Backups > per-row "↺ Restore" — see openRestoreConfirm()
+    // etc. below. restoreConfirm holds the timestamp of the backup log entry
+    // being restored (or null); restoreYears is that specific backup's
+    // contents (get_backup_years), loaded fresh each time the modal opens
+    // since it's a property of the FILE, not of app state.
+    restoreConfirm: null,
+    restoreYears: null,
+    restoreYearsLoading: false,
+    restoreYearsError: null,
+    restoreScope: "",  // "" = everything; else one of restoreYears[].year
+    restoreRunning: false,
+    restoreError: null,
+
     zoom: 1,          // table zoom level (1 = 100%); lets all columns fit without scrolling
     zoomAutoFitDone: false, // the table defaults to "Fit" once per session (not on every
                              // tab switch, so a manual zoom choice sticks)
@@ -1822,8 +1835,17 @@
           el("tbody", {}, rows.map(function (r) {
             var ok = r.status === "success";
             var rowClass = ok ? "backup-row-ok" : "backup-row-fail";
+            var triggerLabel = r.reason === "auto" ? "Auto" : r.reason === "restore" ? "Restore" : r.reason === "pre-restore" ? "Pre-Restore" : "Manual";
             var details;
-            if (ok) {
+            if (r.reason === "restore") {
+              // A restore row's own "backup file" is the source it restored
+              // FROM, which may since have been purged — no download/restore
+              // link for the row itself, just a record of what happened.
+              var scopeLabel = (r.scope && r.scope !== "all") ? (" [event: " + (r.scopeName || r.scope) + "]") : " [everything]";
+              details = ok
+                ? el("span", {}, ["Restored from " + (r.restoredFrom || "unknown") + scopeLabel + " (" + (r.filesWritten || 0) + " files)"])
+                : el("span", { text: "Restore from " + (r.restoredFrom || "unknown") + " failed: " + (r.error || "Unknown error") });
+            } else if (ok) {
               var kb = Math.max(1, Math.round((r.sizeBytes || 0) / 1024));
               var link = el("a", {
                 href: SITE_CONFIG.backupApiUrl + "?action=download&name=" + encodeURIComponent(r.fileName),
@@ -1833,14 +1855,25 @@
             } else {
               details = el("span", { text: r.error || "Unknown error" });
             }
+            // Restore is only offered for a row that still has a real file on
+            // disk (a successful backup or pre-restore snapshot, not a
+            // "restore" record row itself, which has no file of its own).
+            var canRestore = ok && r.reason !== "restore" && r.fileName;
+            var actionBtns = [];
+            if (canRestore) {
+              var restoreBtn = el("button", { type: "button", class: "btn", style: "font-size:12px; padding:2px 8px; margin-right:4px", title: "Restore from this backup" }, ["↺ Restore"]);
+              restoreBtn.addEventListener("click", function () { openRestoreConfirm(r.timestamp); });
+              actionBtns.push(restoreBtn);
+            }
             var deleteBtn = el("button", { type: "button", class: "btn btn-warn", style: "font-size:12px; padding:2px 8px", title: "Delete this backup" }, ["🗑"]);
             deleteBtn.addEventListener("click", function () { openDeleteBackupConfirm(r.timestamp); });
+            actionBtns.push(deleteBtn);
             return el("tr", { class: rowClass }, [
               el("td", { text: r.timestamp ? fmtDate(r.timestamp) : "" }),
-              el("td", { text: r.reason === "auto" ? "Auto" : "Manual" }),
+              el("td", { text: triggerLabel }),
               el("td", { text: ok ? "✅ Success" : "❌ Failed" }),
               el("td", {}, [details]),
-              el("td", {}, [deleteBtn])
+              el("td", { style: "white-space:nowrap" }, actionBtns)
             ]);
           }))
         ]));
@@ -2550,6 +2583,165 @@
     modal.addEventListener("click", function (e) { e.stopPropagation(); });
     var backdrop = el("div", { class: "modal-backdrop" }, [modal]);
     backdrop.addEventListener("click", closeDeleteBackupConfirm);
+    host.appendChild(backdrop);
+  }
+
+  // Setup tab > Backups > per-row "↺ Restore" — modeled on
+  // SilentAuctionManager's restoreBackupEntry(), adapted to this app's own
+  // modal convention (SAM uses prompt()/confirm()/alert() for this rare,
+  // high-stakes action rather than building modal markup for it; this app
+  // already has a modal system for every other confirm, including one that
+  // asks for the Developer password — renderDeleteShowConfirm() — so this
+  // reuses that shape instead of introducing a different UI pattern for one
+  // feature). Opening the modal loads this SPECIFIC backup's contents
+  // (get_backup_years) fresh every time, since which events it contains is a
+  // property of the file, not something worth caching in app state.
+  function openRestoreConfirm(timestamp) {
+    state.restoreConfirm = timestamp;
+    state.restoreYears = null;
+    state.restoreYearsError = null;
+    state.restoreScope = "";
+    state.restoreError = null;
+    loadRestoreYears(timestamp); // sets restoreYearsLoading and renders itself
+  }
+  function closeRestoreConfirm() {
+    state.restoreConfirm = null;
+    state.restoreYears = null;
+    state.restoreYearsError = null;
+    state.restoreScope = "";
+    state.restoreError = null;
+    renderRestoreConfirm();
+  }
+  function loadRestoreYears(timestamp) {
+    if (!SITE_CONFIG.backupApiUrl) return;
+    state.restoreYearsLoading = true;
+    renderRestoreConfirm();
+    fetch(SITE_CONFIG.backupApiUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "get_backup_years", timestamp: timestamp })
+    }).then(function (res) { return res.json().then(function (data) { return { ok: res.ok, data: data }; }); })
+      .then(function (r) {
+        state.restoreYearsLoading = false;
+        // The modal may have been closed (or reopened on a different row)
+        // while this was in flight — ignore a stale response.
+        if (state.restoreConfirm !== timestamp) return;
+        if (r.ok && r.data && r.data.ok) {
+          state.restoreYears = r.data.years || [];
+        } else {
+          state.restoreYearsError = (r.data && r.data.error) || "Could not read this backup's contents.";
+        }
+        renderRestoreConfirm();
+      }).catch(function () {
+        state.restoreYearsLoading = false;
+        if (state.restoreConfirm !== timestamp) return;
+        state.restoreYearsError = "Could not read this backup's contents — check your connection.";
+        renderRestoreConfirm();
+      });
+  }
+  // Restoring can rewrite registrations, overrides, settings, the flyer, and
+  // even which events exist at all — far more than any single fetch's normal
+  // "update this one piece of state" pattern can safely patch in place. Same
+  // choice SAM's own restoreBackupEntry() makes (location.reload()): on
+  // success, reload the whole page so every tab reflects the restored data,
+  // rather than trying to enumerate everything that might now be stale.
+  function performRestore(devPassword) {
+    var timestamp = state.restoreConfirm;
+    if (!timestamp || !SITE_CONFIG.backupApiUrl) return;
+    state.restoreRunning = true;
+    state.restoreError = null;
+    renderRestoreConfirm();
+    fetch(SITE_CONFIG.backupApiUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "restore", timestamp: timestamp, year: state.restoreScope, devPassword: devPassword })
+    }).then(function (res) { return res.json().then(function (data) { return { ok: res.ok, data: data }; }); })
+      .then(function (r) {
+        if (r.ok && r.data && r.data.ok) {
+          window.location.reload();
+          return;
+        }
+        state.restoreRunning = false;
+        state.restoreError = (r.data && r.data.error) || "Restore failed — please try again.";
+        renderRestoreConfirm();
+      }).catch(function () {
+        state.restoreRunning = false;
+        state.restoreError = "Restore failed — check your connection and try again.";
+        renderRestoreConfirm();
+      });
+  }
+  function renderRestoreConfirm() {
+    var host = $("#confirmHost");
+    if (!host) return;
+    host.innerHTML = "";
+    var timestamp = state.restoreConfirm;
+    if (!timestamp) return;
+
+    var entry = (state.backupsList || []).filter(function (r) { return r.timestamp === timestamp; })[0];
+    var fileLabel = entry && entry.fileName ? entry.fileName : "this backup";
+
+    var closeBtn = el("button", { class: "btn" }, ["✕"]);
+    closeBtn.addEventListener("click", closeRestoreConfirm);
+    var head = el("div", { class: "modal-head" }, [
+      el("h3", { text: "Restore from " + fileLabel + "?" }),
+      el("span", { class: "spacer" }), closeBtn
+    ]);
+
+    var bodyKids = [];
+
+    if (state.restoreYearsLoading) {
+      bodyKids.push(el("p", {}, ["Loading this backup's contents…"]));
+    } else if (state.restoreYearsError) {
+      bodyKids.push(el("div", { class: "form-error" }, [state.restoreYearsError]));
+    } else {
+      var years = state.restoreYears || [];
+      var scopeSel = el("select", {});
+      scopeSel.appendChild(el("option", { value: "", text: "Everything (every event, plus global settings)" }));
+      years.forEach(function (y) {
+        scopeSel.appendChild(el("option", {
+          value: y.year,
+          text: (y.name || y.year) + " (" + y.year + ") — " + y.fileCount + " file" + (y.fileCount === 1 ? "" : "s")
+        }));
+      });
+      scopeSel.value = state.restoreScope;
+      scopeSel.addEventListener("change", function () { state.restoreScope = scopeSel.value; renderRestoreConfirm(); });
+
+      var scopeIsAll = state.restoreScope === "";
+      var scopeWarning = scopeIsAll
+        ? "This REPLACES EVERYTHING — every event's registrations, overrides, settings, and flyer, plus the site/Developer password-reset state — with what was in that backup. Any event created since, or any global file this backup doesn't have, is deleted, not just overwritten."
+        : "This REPLACES ONLY the \"" + (years.filter(function (y) { return y.year === state.restoreScope; })[0] || {}).name + "\" event's data with what was in that backup — every other event, and global settings, are left untouched.";
+
+      bodyKids.push(el("div", { class: "form-row" }, [
+        el("span", { class: "form-label", text: "Restore" }), scopeSel
+      ]));
+      bodyKids.push(el("p", { style: "color:var(--warn)" }, [scopeWarning]));
+      bodyKids.push(el("p", {}, [
+        "A safety backup of the CURRENT data is taken automatically right before restoring, so this can itself " +
+        "be undone by restoring that safety backup afterward. This cannot be undone directly."
+      ]));
+
+      var pw = el("input", { type: "password", placeholder: "Developer password", autocomplete: "off" });
+      var yesBtn = el("button", { class: "btn primary", style: "background:var(--warn);border-color:var(--red-dark)" }, ["Yes, Restore"]);
+      if (state.restoreRunning) yesBtn.setAttribute("disabled", "disabled");
+      yesBtn.addEventListener("click", function () { performRestore(pw.value); });
+      pw.addEventListener("keydown", function (e) {
+        if (e.key === "Enter") { e.preventDefault(); performRestore(pw.value); }
+      });
+      var noBtn = el("button", { class: "btn" }, ["Cancel"]);
+      noBtn.addEventListener("click", closeRestoreConfirm);
+
+      bodyKids.push(el("p", {}, ["Enter the Developer password to confirm:"]));
+      bodyKids.push(pw);
+      bodyKids.push(el("div", { class: "settings-actions" }, [yesBtn, noBtn]));
+      if (state.restoreRunning) bodyKids.push(el("div", { class: "hint" }, ["Restoring… this may take a moment."]));
+    }
+    if (state.restoreError) bodyKids.push(el("div", { class: "form-error" }, [state.restoreError]));
+
+    var body = el("div", { class: "modal-body" }, bodyKids);
+    var modal = el("div", { class: "modal" }, [head, body]);
+    modal.addEventListener("click", function (e) { e.stopPropagation(); });
+    var backdrop = el("div", { class: "modal-backdrop" }, [modal]);
+    backdrop.addEventListener("click", closeRestoreConfirm);
     host.appendChild(backdrop);
   }
 
