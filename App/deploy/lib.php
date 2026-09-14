@@ -355,6 +355,22 @@ function vettefest_settings_defaults() {
     return [
         'tshirtVendorEmail'  => '',
         'tshirtOrderSubject' => 'ETCC Vette Fest — T-Shirt Order',
+        // --- Reports tab report builders (app.js's openGenReportPage()) ---
+        // Per report: the chosen column keys in print order, the sort column
+        // and direction. An empty column list / sort column means "never
+        // customized" — app.js falls back to that report's own defaults, so the
+        // default layout can change in one place without saved settings
+        // pinning the old one. MUST be listed here: app-settings.php drops any
+        // key missing from these defaults.
+        'regReportColumns' => [],
+        'regReportSortCol' => '',
+        'regReportSortDir' => 'asc',
+        'carShowReportColumns' => [],
+        'carShowReportSortCol' => '',
+        'carShowReportSortDir' => 'asc',
+        'tshirtReportColumns' => [],
+        'tshirtReportSortCol' => '',
+        'tshirtReportSortDir' => 'asc',
         // --- Setup tab > Import Schedule (see import-schedule.php) ---
         // eventUrl: the ClubExpress event Admin Panels URL for this event's
         // year, read by the /ETCCVetteFestImportData skill instead of a

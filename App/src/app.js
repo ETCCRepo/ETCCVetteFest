@@ -1562,52 +1562,12 @@
     var orderBtn = el("button", { class: "btn primary" }, ["📧 T-Shirt Order Form"]);
     orderBtn.addEventListener("click", openTshirtOrderPage);
     var reportBtn = el("button", { class: "btn" }, ["📊 T-Shirt Report"]);
-    reportBtn.addEventListener("click", printTshirtReport);
+    reportBtn.addEventListener("click", function () { openGenReportPage(TSHIRT_REPORT_SPEC); });
     wrap.appendChild(el("div", { class: "panel" }, [
       el("div", { class: "settings-actions" }, [orderBtn, reportBtn])
     ]));
 
     return wrap;
-  }
-
-  function printTshirtReport() {
-    if (!state.result || !state.result.ok) return;
-    var host = $("#printHost");
-    host.innerHTML = "";
-
-    var paidRecs = allRegistrations().filter(function (r) {
-      return classifyStatus(r["Status"]) === "paid" && shirtTotal(r) > 0;
-    }).sort(function (a, b) {
-      var aLast = String(a["Last Name"] || "").toLowerCase();
-      var bLast = String(b["Last Name"] || "").toLowerCase();
-      if (aLast !== bLast) return aLast < bLast ? -1 : 1;
-      var aFirst = String(a["First Name(s)"] || "").toLowerCase();
-      var bFirst = String(b["First Name(s)"] || "").toLowerCase();
-      return aFirst < bFirst ? -1 : aFirst > bFirst ? 1 : 0;
-    });
-    var rows = paidRecs.map(function (r) {
-      return el("tr", {}, [
-        el("td", { text: r["Reg #"] || "—" }),
-        el("td", { text: r["Last Name"] || "—" }),
-        el("td", { text: r["First Name(s)"] || "—" }),
-        el("td", { text: shirtSummaryText(r) || "—" })
-      ]);
-    });
-
-    host.appendChild(buildPrintHeader("T-Shirt Report"));
-    host.appendChild(el("table", { class: "grid report-table centered-report-table" }, [
-      el("thead", {}, [el("tr", {}, [
-        el("th", { text: "Reg #" }), el("th", { text: "Last Name" }),
-        el("th", { text: "First Name(s)" }), el("th", { text: "Shirts" })
-      ])]),
-      el("tbody", {}, rows)
-    ]));
-    host.appendChild(el("div", { class: "panel", style: "margin-top:14px; max-width:420px" }, [
-      el("div", { class: "stat-card-head", text: "Totals" }),
-      shirtMatrix(paidShirtTotals())
-    ]));
-    host.appendChild(buildPrintFooter());
-    window.print();
   }
 
   // ---------- Page banner helper (shared by all full-page overlays) ----------
@@ -1714,11 +1674,11 @@
     var summaryBtn = el("button", { class: "btn" }, ["📊 Vette Fest Summary Report"]);
     summaryBtn.addEventListener("click", printSummaryReport);
     var regBtn = el("button", { class: "btn" }, ["📋 Registration Report"]);
-    regBtn.addEventListener("click", printRegistrationReport);
+    regBtn.addEventListener("click", function () { openGenReportPage(REG_REPORT_SPEC); });
     var showBtn = el("button", { class: "btn" }, ["🏁 Car Show Report"]);
-    showBtn.addEventListener("click", printCarShowReport);
+    showBtn.addEventListener("click", function () { openGenReportPage(CARSHOW_REPORT_SPEC); });
     var tshirtBtn = el("button", { class: "btn" }, ["👕 T-Shirt Report"]);
-    tshirtBtn.addEventListener("click", printTshirtReport);
+    tshirtBtn.addEventListener("click", function () { openGenReportPage(TSHIRT_REPORT_SPEC); });
     var flyerBtn = el("button", { class: "btn" }, ["🖼️ Print Flyer"]);
     if (!state.flyer || !state.flyer.exists) flyerBtn.setAttribute("disabled", "disabled");
     flyerBtn.addEventListener("click", printFlyer);
@@ -2929,75 +2889,417 @@
     window.print();
   }
 
-  // Reg # / names / club / admission / shirts, always sorted by Reg # —
-  // scoped to the Registration tab's current search/status filters, same as
-  // its on-screen table.
-  function printRegistrationReport() {
-    if (!state.result || !state.result.ok) return;
-    var host = $("#printHost");
-    host.innerHTML = "";
-    var rows = visibleRows().slice().sort(function (a, b) {
-      return String(a["Reg #"]) < String(b["Reg #"]) ? -1 : 1;
-    });
-    var thead = el("thead", {}, [el("tr", {}, [
-      el("th", { text: "Reg #" }), el("th", { text: "Last Name" }), el("th", { text: "First Name(s)" }),
-      el("th", { text: "Club Name" }), el("th", { text: "Admission" }), el("th", { text: "#" }),
-      el("th", { text: "Shirts" })
-    ])]);
-    var tbody = el("tbody", {}, rows.map(function (r) {
-      return el("tr", {}, [
-        el("td", { text: r["Reg #"] || "" }),
-        el("td", { text: r["Last Name"] || "" }),
-        el("td", { text: r["First Name(s)"] || "" }),
-        el("td", { text: r["Club Name"] || "" }),
-        el("td", { text: r["Reg Type"] || "" }),
-        el("td", { text: String(r["#"] == null ? "" : r["#"]) }),
-        el("td", { class: "shirtsum", text: shirtSummaryText(r) })
-      ]);
-    }));
-    host.appendChild(buildPrintHeader("Registration Report"));
-    host.appendChild(el("table", { class: "grid report-table" }, [thead, tbody]));
-    host.appendChild(buildPrintFooter());
-    window.print();
+  // ---------- Report builder (preview + column/sort picker) ----------
+  // Registration, Car Show and T-Shirt Report each open a full-page screen: a
+  // live print preview on the left and a collapsible builder on the right
+  // (Available / In Report column panels, drag to reorder, sort picker).
+  // Ported from the sibling CarShow app's generic report builder
+  // (GenReport* functions) — keep the two in sync. Each report's layout is
+  // saved per event in app-settings.json under its spec.id prefix
+  // (<id>ReportColumns / <id>ReportSortCol / <id>ReportSortDir — see
+  // vettefest_settings_defaults() in lib.php; app-settings.php drops any key
+  // not listed there). An empty saved column list means "never customized",
+  // so the defaults below can change in one place.
+
+  // Shared by all three reports — they all read the same registration row.
+  function regRowFieldText(r, key) {
+    if (key === "shirts") return shirtSummaryText(r);
+    if (key === "Phone") return fmtPhone(r["Phone"]) || "";
+    if (key === "Reg Date") return r["Reg Date"] ? fmtCsvDate(r["Reg Date"]) : "";
+    if (key === "Total Fee") return r["Total Fee"] === "" || r["Total Fee"] == null ? "" : fmtMoney(r["Total Fee"]);
+    var v = r[key];
+    return v == null ? "" : String(v);
+  }
+  var REPORT_NUMERIC_KEYS = { "#": 1, "Year": 1, "Total Fee": 1 };
+  function regRowSortValue(r, key) {
+    if (key === "Reg Date") {
+      var d = r["Reg Date"] ? new Date(r["Reg Date"]) : null;
+      return d && !isNaN(d.getTime()) ? d.getTime() : -Infinity;
+    }
+    if (key === "shirts") return shirtTotal(r);
+    if (REPORT_NUMERIC_KEYS[key]) {
+      var n = Number(r[key]);
+      return r[key] === "" || r[key] == null || isNaN(n) ? -Infinity : n;
+    }
+    // Blank text sorts after everything (ascending), so e.g. a car with no
+    // known generation lands at the end of the Car Show Report, as it did
+    // before the builder existed.
+    var t = regRowFieldText(r, key).toLowerCase();
+    return t === "" ? "￿" : t;
   }
 
-  // The judging roster: only cars actually entered in the show (SHW = Yes),
-  // grouped by generation — the list the show field is laid out from, which
-  // is why it ignores the Registration tab's In Show checkbox and always
-  // filters for itself.
-  function printCarShowReport() {
+  var REG_REPORT_ALL_COLS = [
+    { key: "Reg #", label: "Reg #" },
+    { key: "Last Name", label: "Last Name" },
+    { key: "First Name(s)", label: "First Name(s)" },
+    { key: "Reg Date", label: "Reg Date" },
+    { key: "Reg Type", label: "Admission" },
+    { key: "#", label: "#" },
+    { key: "Club Name", label: "Club Name" },
+    { key: "Phone", label: "Phone" },
+    { key: "Email", label: "Email" },
+    { key: "Address", label: "Address" },
+    { key: "City", label: "City" },
+    { key: "State", label: "State" },
+    { key: "Zip", label: "Zip" },
+    { key: "Total Fee", label: "Total Fee" },
+    { key: "Payment Type", label: "Payment Type" },
+    { key: "Check #", label: "Check #" },
+    { key: "Status", label: "Status" },
+    { key: "Year", label: "Year" },
+    { key: "Gen", label: "Gen" },
+    { key: "Model", label: "Model" },
+    { key: "Color", label: "Color" },
+    { key: "SHW", label: "SHW" },
+    { key: "CSJ", label: "CSJ" },
+    { key: "shirts", label: "Shirts", cls: "shirtsum" }
+  ];
+
+  // Defaults reproduce each report's previous fixed layout exactly.
+  var REG_REPORT_SPEC = {
+    id: "reg",
+    title: "Registration Report",
+    allCols: REG_REPORT_ALL_COLS,
+    defaultKeys: ["Reg #", "Last Name", "First Name(s)", "Club Name", "Reg Type", "#", "shirts"],
+    defaultSortKey: "Reg #",
+    emptyText: "No registrations to report yet.",
+    // Scoped to the Registration tab's current search/status filters, same as
+    // its on-screen table.
+    getRows: function () { return visibleRows(); },
+    cellText: regRowFieldText,
+    sortValue: regRowSortValue
+  };
+
+  var CARSHOW_REPORT_SPEC = {
+    id: "carShow",
+    title: "Car Show Report",
+    allCols: REG_REPORT_ALL_COLS,
+    defaultKeys: ["Gen", "Reg #", "Last Name", "First Name(s)", "Year", "Model", "Color", "Club Name"],
+    defaultSortKey: "Gen",
+    emptyText: "No cars entered in the show yet.",
+    // The judging roster: only cars actually entered (SHW = Yes). It applies
+    // that filter itself, so it doesn't depend on the Registration tab's In
+    // Show checkbox; search/status still scope it, as before.
+    getRows: function () {
+      return visibleRows().filter(function (r) {
+        return String(r[CONFIG.carJudgedColumn]).trim().toLowerCase() === "yes";
+      });
+    },
+    printTitle: function (rows) { return "Car Show Report — " + rows.length + " entries"; },
+    cellText: regRowFieldText,
+    sortValue: regRowSortValue
+  };
+
+  var TSHIRT_REPORT_SPEC = {
+    id: "tshirt",
+    title: "T-Shirt Report",
+    allCols: REG_REPORT_ALL_COLS,
+    defaultKeys: ["Reg #", "Last Name", "First Name(s)", "shirts"],
+    defaultSortKey: "Last Name",
+    emptyText: "No paid registrations with shirts to report yet.",
+    // Only paid registrations get a shirt, and only ones that ordered any.
+    getRows: function () {
+      return allRegistrations().filter(function (r) {
+        return classifyStatus(r["Status"]) === "paid" && shirtTotal(r) > 0;
+      });
+    },
+    // The size x Free/Xtra totals the old fixed report printed under its table.
+    extra: function () {
+      return el("div", { class: "panel", style: "margin-top:14px; max-width:420px" }, [
+        el("div", { class: "stat-card-head", text: "Totals" }),
+        shirtMatrix(paidShirtTotals())
+      ]);
+    },
+    cellText: regRowFieldText,
+    sortValue: regRowSortValue
+  };
+
+  function genReportColumns(spec) {
+    var saved = state.appSettings[spec.id + "ReportColumns"];
+    var keys = (Array.isArray(saved) && saved.length) ? saved : spec.defaultKeys;
+    var cols = [];
+    keys.forEach(function (k) {
+      var c = spec.allCols.filter(function (x) { return x.key === k; })[0];
+      if (c) cols.push(c);
+    });
+    return cols.length ? cols : spec.allCols.filter(function (c) { return spec.defaultKeys.indexOf(c.key) !== -1; });
+  }
+  function genReportAvailableColumns(spec) {
+    var chosen = {};
+    genReportColumns(spec).forEach(function (c) { chosen[c.key] = true; });
+    return spec.allCols.filter(function (c) { return !chosen[c.key]; });
+  }
+  function genReportSortSpec(spec) {
+    var cols = genReportColumns(spec);
+    var inReport = function (k) { return cols.some(function (c) { return c.key === k; }); };
+    var savedCol = state.appSettings[spec.id + "ReportSortCol"];
+    // Falls back to the report's own default sort (e.g. T-Shirt Report by
+    // Last Name) before the first column, so an uncustomized report keeps
+    // its original ordering.
+    var key = inReport(savedCol) ? savedCol
+      : inReport(spec.defaultSortKey) ? spec.defaultSortKey
+      : (cols.length ? cols[0].key : spec.defaultSortKey);
+    return { key: key, dir: state.appSettings[spec.id + "ReportSortDir"] === "desc" ? -1 : 1 };
+  }
+  function genReportCell(spec, row, c) {
+    return el("td", { class: c.cls || "", text: spec.cellText(row, c.key) });
+  }
+  function genReportSorted(spec) {
+    var s = genReportSortSpec(spec);
+    return spec.getRows().slice().sort(function (a, b) {
+      var av = spec.sortValue(a, s.key), bv = spec.sortValue(b, s.key);
+      if (av < bv) return -s.dir;
+      if (av > bv) return s.dir;
+      // Ties break by Reg # so grouped sorts (e.g. Gen) stay in a stable,
+      // readable order — the old Car Show Report sorted Gen then Reg #.
+      var ar = String(a["Reg #"] || ""), br = String(b["Reg #"] || "");
+      return ar < br ? -1 : ar > br ? 1 : 0;
+    });
+  }
+  function saveGenReportLayout(spec, patch) {
+    Object.keys(patch).forEach(function (k) { state.appSettings[k] = patch[k]; });
+    renderGenReportPage(spec);
+    if (!SITE_CONFIG.appSettingsApiUrl) return;
+    fetch(SITE_CONFIG.appSettingsApiUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "save", settings: patch })
+    }).catch(function () { /* layout is cosmetic — keep the local change rather than reverting the UI */ });
+  }
+  function genReportAddColumn(spec, key) {
+    var keys = genReportColumns(spec).map(function (c) { return c.key; });
+    if (keys.indexOf(key) !== -1) return;
+    keys.push(key);
+    var patch = {}; patch[spec.id + "ReportColumns"] = keys;
+    saveGenReportLayout(spec, patch);
+  }
+  function genReportRemoveColumn(spec, key) {
+    var keys = genReportColumns(spec).map(function (c) { return c.key; }).filter(function (k) { return k !== key; });
+    if (!keys.length) return;
+    var patch = {}; patch[spec.id + "ReportColumns"] = keys;
+    saveGenReportLayout(spec, patch);
+  }
+  function genReportMoveColumn(spec, key, beforeKey) {
+    if (key === beforeKey) return;
+    var keys = genReportColumns(spec).map(function (c) { return c.key; }).filter(function (k) { return k !== key; });
+    var at = beforeKey === null ? keys.length : keys.indexOf(beforeKey);
+    if (at < 0) at = keys.length;
+    keys.splice(at, 0, key);
+    var patch = {}; patch[spec.id + "ReportColumns"] = keys;
+    saveGenReportLayout(spec, patch);
+  }
+  function genReportAddAllColumns(spec) {
+    var keys = genReportColumns(spec).map(function (c) { return c.key; });
+    var have = {};
+    keys.forEach(function (k) { have[k] = true; });
+    spec.allCols.forEach(function (c) { if (!have[c.key]) keys.push(c.key); });
+    var patch = {}; patch[spec.id + "ReportColumns"] = keys;
+    saveGenReportLayout(spec, patch);
+  }
+  function genReportRemoveAllColumns(spec) {
+    var keys = genReportColumns(spec).map(function (c) { return c.key; }).slice(0, 1);
+    if (!keys.length) return;
+    var patch = {}; patch[spec.id + "ReportColumns"] = keys;
+    saveGenReportLayout(spec, patch);
+  }
+  function buildGenReportColumnRow(spec, col, selected) {
+    var kids = [el("span", { class: "report-col-label", text: col.label })];
+    var row = el("div", { class: "report-col" + (selected ? " selected" : "") }, kids);
+    var dragKey = spec.id + "ReportDragKey";
+    if (selected) {
+      row.setAttribute("draggable", "true");
+      row.insertBefore(el("span", { class: "report-col-grip", title: "Drag to reorder" }, ["⠿"]), row.firstChild);
+      var removeBtn = el("button", { type: "button", class: "btn", style: "padding:1px 7px; font-size:12px", title: "Remove from report" }, ["✕"]);
+      removeBtn.addEventListener("click", function () { genReportRemoveColumn(spec, col.key); });
+      row.appendChild(el("span", { class: "spacer" }));
+      row.appendChild(removeBtn);
+      row.addEventListener("dragstart", function (e) {
+        state[dragKey] = col.key;
+        row.classList.add("dragging");
+        if (e.dataTransfer) { e.dataTransfer.effectAllowed = "move"; try { e.dataTransfer.setData("text/plain", col.key); } catch (err) { /* the state field is the real channel */ } }
+      });
+      row.addEventListener("dragend", function () {
+        state[dragKey] = null;
+        row.classList.remove("dragging");
+      });
+      // Dropping ON a row inserts the dragged column before it; dropping on the
+      // panel's empty space below the rows appends (see the list's handlers).
+      row.addEventListener("dragover", function (e) {
+        if (!state[dragKey]) return;
+        e.preventDefault();
+        if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+        row.classList.add("drop-target");
+      });
+      row.addEventListener("dragleave", function () { row.classList.remove("drop-target"); });
+      row.addEventListener("drop", function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        row.classList.remove("drop-target");
+        var dragged = state[dragKey];
+        state[dragKey] = null;
+        if (dragged) genReportMoveColumn(spec, dragged, col.key);
+      });
+    } else {
+      var addBtn = el("button", { type: "button", class: "btn", style: "padding:1px 7px; font-size:12px", title: "Add to report" }, ["+"]);
+      addBtn.addEventListener("click", function () { genReportAddColumn(spec, col.key); });
+      row.appendChild(el("span", { class: "spacer" }));
+      row.appendChild(addBtn);
+      row.addEventListener("dblclick", function () { genReportAddColumn(spec, col.key); });
+    }
+    return row;
+  }
+  function genReportTitle(spec, rows) { return spec.printTitle ? spec.printTitle(rows) : spec.title; }
+  function printGenReport(spec) {
     if (!state.result || !state.result.ok) return;
+    var rows = genReportSorted(spec);
+    if (!rows.length) return;
+    var cols = genReportColumns(spec);
     var host = $("#printHost");
     host.innerHTML = "";
-    var entrants = visibleRows().filter(function (r) {
-      return String(r[CONFIG.carJudgedColumn]).trim().toLowerCase() === "yes";
-    }).sort(function (a, b) {
-      var ag = String(a["Gen"] || "ZZ"), bg = String(b["Gen"] || "ZZ");
-      if (ag !== bg) return ag < bg ? -1 : 1;
-      return String(a["Reg #"]) < String(b["Reg #"]) ? -1 : 1;
-    });
-    var thead = el("thead", {}, [el("tr", {}, [
-      el("th", { text: "Gen" }), el("th", { text: "Reg #" }), el("th", { text: "Last Name" }),
-      el("th", { text: "First Name(s)" }), el("th", { text: "Year" }), el("th", { text: "Model" }),
-      el("th", { text: "Color" }), el("th", { text: "Club Name" })
-    ])]);
-    var tbody = el("tbody", {}, entrants.map(function (r) {
-      return el("tr", {}, [
-        el("td", { text: r["Gen"] || "—" }),
-        el("td", { text: r["Reg #"] || "" }),
-        el("td", { text: r["Last Name"] || "" }),
-        el("td", { text: r["First Name(s)"] || "" }),
-        el("td", { text: String(r["Year"] == null ? "" : r["Year"]) }),
-        el("td", { text: r["Model"] || "" }),
-        el("td", { text: r["Color"] || "" }),
-        el("td", { text: r["Club Name"] || "" })
-      ]);
-    }));
-    host.appendChild(buildPrintHeader("Car Show Report — " + entrants.length + " entries"));
-    host.appendChild(el("table", { class: "grid report-table" }, [thead, tbody]));
+    var thead = el("thead", {}, [el("tr", {}, cols.map(function (c) { return el("th", { text: c.label }); }))]);
+    var tbody = el("tbody", {}, rows.map(function (r) { return el("tr", {}, cols.map(function (c) { return genReportCell(spec, r, c); })); }));
+    host.appendChild(buildPrintHeader(genReportTitle(spec, rows)));
+    host.appendChild(el("table", { class: "grid report-table centered-report-table dense-report-table" }, [thead, tbody]));
+    if (spec.extra) host.appendChild(spec.extra());
     host.appendChild(buildPrintFooter());
     window.print();
   }
+  function buildGenReportPreview(spec) {
+    var cols = genReportColumns(spec);
+    var rows = (state.result && state.result.ok) ? genReportSorted(spec) : [];
+    var sheet = el("div", { class: "report-preview-sheet" }, [buildPrintHeader(genReportTitle(spec, rows))]);
+    if (!rows.length) {
+      sheet.appendChild(el("div", { class: "empty-state" }, [spec.emptyText]));
+    } else {
+      var table = el("table", { class: "grid report-table centered-report-table dense-report-table report-preview-table" }, [
+        el("thead", {}, [el("tr", {}, cols.map(function (c) { return el("th", { text: c.label }); }))]),
+        el("tbody", {}, rows.map(function (r) { return el("tr", {}, cols.map(function (c) { return genReportCell(spec, r, c); })); }))
+      ]);
+      sheet.appendChild(el("div", { class: "report-preview-tablewrap" }, [table]));
+      if (spec.extra) sheet.appendChild(spec.extra());
+    }
+    sheet.appendChild(buildPrintFooter());
+    return el("div", { class: "report-preview-pane" }, [
+      el("div", { class: "report-pane-title", text: "Print Preview" }),
+      sheet
+    ]);
+  }
+  function buildGenReportBuilder(spec) {
+    var available = genReportAvailableColumns(spec);
+    var selected = genReportColumns(spec);
+
+    var addAllBtn = el("button", { type: "button", class: "btn report-panel-head-btn" }, ["Add All"]);
+    addAllBtn.disabled = !available.length;
+    addAllBtn.addEventListener("click", function () { genReportAddAllColumns(spec); });
+    var availablePanel = el("div", { class: "report-col-panel" }, [
+      el("div", { class: "report-panel-head report-panel-head-row" }, [
+        el("span", { text: "Available Columns" }),
+        addAllBtn
+      ]),
+      available.length
+        ? el("div", { class: "report-col-list" }, available.map(function (c) { return buildGenReportColumnRow(spec, c, false); }))
+        : el("div", { class: "hint", style: "padding:10px" }, ["Every column is already in the report."])
+    ]);
+
+    var selectedList = el("div", { class: "report-col-list" }, selected.map(function (c) { return buildGenReportColumnRow(spec, c, true); }));
+    var dragKey = spec.id + "ReportDragKey";
+    selectedList.addEventListener("dragover", function (e) {
+      if (!state[dragKey]) return;
+      e.preventDefault();
+      if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+    });
+    selectedList.addEventListener("drop", function (e) {
+      e.preventDefault();
+      var dragged = state[dragKey];
+      state[dragKey] = null;
+      if (dragged) genReportMoveColumn(spec, dragged, null);
+    });
+    var removeAllBtn = el("button", { type: "button", class: "btn report-panel-head-btn" }, ["Remove All"]);
+    removeAllBtn.disabled = selected.length <= 1;
+    removeAllBtn.addEventListener("click", function () { genReportRemoveAllColumns(spec); });
+    var selectedPanel = el("div", { class: "report-col-panel" }, [
+      el("div", { class: "report-panel-head report-panel-head-row" }, [
+        el("span", { text: "In Report (drag to reorder)" }),
+        removeAllBtn
+      ]),
+      selectedList
+    ]);
+
+    var sortSpec = genReportSortSpec(spec);
+    var sortSel = el("select", {});
+    selected.forEach(function (c) { sortSel.appendChild(el("option", { value: c.key, text: c.label })); });
+    sortSel.value = sortSpec.key;
+    sortSel.addEventListener("change", function () {
+      var patch = {}; patch[spec.id + "ReportSortCol"] = sortSel.value;
+      saveGenReportLayout(spec, patch);
+    });
+    var dirSel = el("select", {});
+    dirSel.appendChild(el("option", { value: "asc", text: "Ascending" }));
+    dirSel.appendChild(el("option", { value: "desc", text: "Descending" }));
+    dirSel.value = sortSpec.dir === -1 ? "desc" : "asc";
+    dirSel.addEventListener("change", function () {
+      var patch = {}; patch[spec.id + "ReportSortDir"] = dirSel.value;
+      saveGenReportLayout(spec, patch);
+    });
+
+    var resetBtn = el("button", { type: "button", class: "btn", style: "font-size:12px; padding:4px 10px" }, ["↺ Reset to Default"]);
+    resetBtn.addEventListener("click", function () {
+      var patch = {};
+      patch[spec.id + "ReportColumns"] = spec.defaultKeys.slice();
+      patch[spec.id + "ReportSortCol"] = spec.defaultSortKey;
+      patch[spec.id + "ReportSortDir"] = "asc";
+      saveGenReportLayout(spec, patch);
+    });
+
+    // Collapsed by default — a one-time setup task, not something an officer
+    // needs open every time they print, so the preview gets the room.
+    var body = el("div", { class: "report-builder-body-inner" }, [
+      el("div", { class: "hint", style: "margin-bottom:10px" }, [
+        "Click + to add a column, ✕ to remove one, and drag the columns in " +
+        "\"In Report\" to change their print order. Changes save automatically and apply to every printed copy."
+      ]),
+      el("div", { class: "report-col-panels" }, [availablePanel, selectedPanel]),
+      el("div", { class: "form-row", style: "margin-top:14px" }, [
+        el("span", { class: "form-label", text: "Sort by" }),
+        el("div", { style: "display:flex; gap:8px; align-items:center; flex-wrap:wrap" }, [sortSel, dirSel])
+      ]),
+      el("div", { class: "settings-actions" }, [resetBtn])
+    ]);
+    var openKey = spec.id + "ReportBuilderOpen";
+    var isOpen = !!state[openKey];
+    body.hidden = !isOpen;
+    var toggleBtn = el("button", { type: "button", class: "btn", style: "font-size:12px; padding:4px 10px" },
+      [isOpen ? "▲ Hide" : "▼ Show"]);
+    toggleBtn.addEventListener("click", function () {
+      state[openKey] = !isOpen;
+      renderGenReportPage(spec);
+    });
+
+    return el("div", { class: "report-builder-pane" }, [
+      el("div", { class: "report-pane-title report-pane-title-row" }, [
+        el("span", { text: spec.title + " Builder" }),
+        toggleBtn
+      ]),
+      body
+    ]);
+  }
+  var GEN_REPORT_SPECS = [REG_REPORT_SPEC, CARSHOW_REPORT_SPEC, TSHIRT_REPORT_SPEC];
+  function renderGenReportPage(spec) {
+    var host = $("#" + spec.id + "ReportHost");
+    if (!host) return;
+    host.innerHTML = "";
+    if (!state[spec.id + "ReportPageOpen"]) return;
+    var page = el("div", { class: "api-page" }, [
+      buildPageBanner(function () { closeGenReportPage(spec); }, spec.title, function () { printGenReport(spec); }),
+      el("div", { class: "api-page-body report-builder-body" }, [
+        buildGenReportPreview(spec),
+        buildGenReportBuilder(spec)
+      ])
+    ]);
+    host.appendChild(page);
+  }
+  function openGenReportPage(spec) { state[spec.id + "ReportPageOpen"] = true; renderGenReportPage(spec); }
+  function closeGenReportPage(spec) { state[spec.id + "ReportPageOpen"] = false; renderGenReportPage(spec); }
 
   // The event flyer uploaded on the Setup tab. Unlike the four data reports
   // above (which build an HTML table into #printHost and call window.print()),
@@ -3536,6 +3838,9 @@
     document.body.appendChild(el("div", { id: "settingsHost" }));
     document.body.appendChild(el("div", { id: "changelogHost" }));
     document.body.appendChild(el("div", { id: "tshirtOrderHost" }));
+    document.body.appendChild(el("div", { id: "regReportHost" }));
+    document.body.appendChild(el("div", { id: "carShowReportHost" }));
+    document.body.appendChild(el("div", { id: "tshirtReportHost" }));
     document.body.appendChild(el("div", { id: "confirmHost" }));
     document.body.appendChild(el("div", { id: "testsHost" }));
     document.body.appendChild(el("div", { id: "developerLoginHost" }));
@@ -3558,6 +3863,8 @@
       if (state.developerLoginOpen) { closeDeveloperLogin(); return; }
       if (state.changelogOpen) { closeChangelog(); return; }
       if (state.tshirtOrderPageOpen) { closeTshirtOrderPage(); return; }
+      var openReport = GEN_REPORT_SPECS.filter(function (sp) { return state[sp.id + "ReportPageOpen"]; })[0];
+      if (openReport) { closeGenReportPage(openReport); return; }
       if (state.showPendingDelete) { cancelDeleteShow(); return; }
       if (state.deleteHistoryConfirm) { closeDeleteHistoryConfirm(); return; }
       if (state.deleteRegSelectedOpen) { closeDeleteRegSelectedConfirm(); return; }

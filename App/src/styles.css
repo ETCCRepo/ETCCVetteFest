@@ -426,6 +426,48 @@ a.show-open:hover { text-decoration: underline; }
 .badge-muted { background: var(--muted); }
 .badge-accent { background: var(--accent); }
 
+/* Reports tab report builder screens (app.js's renderGenReportPage()) — print
+   preview on the left, column/sort builder on the right; stacks to one column
+   on a narrow screen. Ported from the sibling CarShow app — keep in sync. */
+.report-builder-body { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 20px; align-items: start; }
+.report-preview-pane, .report-builder-pane { min-width: 0; }
+.report-pane-title { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); font-weight: 700; margin-bottom: 8px; }
+.report-pane-title-row { display: flex; align-items: center; justify-content: space-between; }
+.report-pane-title-row .btn { text-transform: none; letter-spacing: normal; font-weight: 600; }
+/* The paper-shaped "sheet". Its header/footer come from the real print path's
+   buildPrintHeader()/buildPrintFooter(), whose styling is print-scoped, so it
+   is restated here for the on-screen copy. */
+.report-preview-sheet { background: #fff; border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 1px 4px rgba(0,0,0,.06); padding: 18px 20px; overflow-x: auto; }
+.report-preview-sheet .print-report-head { display: flex; flex-direction: column; align-items: center; gap: 4px; margin-bottom: 10px; }
+.report-preview-sheet .print-report-head h2 { margin: 0; font-size: 15px; }
+.report-preview-sheet .print-report-head .print-logo { height: 40px; width: 40px; object-fit: contain; }
+.report-preview-sheet .print-report-foot { margin-top: 14px; text-align: center; font-size: 11px; color: var(--muted); }
+/* A long report scrolls inside the sheet so its header/footer stay visible. */
+.report-preview-tablewrap { max-height: calc(100vh - 320px); overflow: auto; }
+/* Mirrors the print rules for .dense-report-table so the preview is WYSIWYG.
+   "table." prefix to out-specify table.grid's width:100%. */
+table.report-preview-table { width: auto; margin: 0 auto; }
+table.report-preview-table th, table.report-preview-table td { font-size: 10px; line-height: 1.15; padding: 1px 4.8px; white-space: nowrap; }
+
+.report-col-panels { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.report-col-panel { border: 1px solid var(--line); border-radius: 8px; background: #fff; display: flex; flex-direction: column; min-width: 0; }
+.report-panel-head { font-size: 11px; font-weight: 700; color: var(--muted); padding: 7px 9px; border-bottom: 1px solid var(--line); }
+.report-panel-head-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.report-panel-head-btn { font-size: 11px; font-weight: 600; text-transform: none; letter-spacing: normal; padding: 2px 8px; }
+.report-col-list { padding: 6px; display: flex; flex-direction: column; gap: 4px; max-height: 46vh; overflow-y: auto; min-height: 60px; }
+.report-col { display: flex; align-items: center; gap: 6px; padding: 4px 6px; border: 1px solid var(--line); border-radius: 6px; background: #fafbfc; font-size: 12px; }
+.report-col.selected { background: #fff; cursor: grab; }
+.report-col.selected:active { cursor: grabbing; }
+.report-col-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.report-col-grip { color: var(--muted); font-size: 11px; line-height: 1; flex-shrink: 0; }
+.report-col.dragging { opacity: .45; }
+/* Where the dragged column will land — "inserts before this row". */
+.report-col.drop-target { border-top: 2px solid var(--red); }
+
+@media (max-width: 1100px) {
+  .report-builder-body { grid-template-columns: minmax(0, 1fr); }
+}
+
 @media print {
   @page { size: landscape; margin: 0.3in; }
   header.app, .tabs, .toolbar, .no-print, .modal-backdrop, .changelog-page, .api-page, .loadedinfo, footer.app-footer { display: none !important; }
@@ -475,6 +517,15 @@ a.show-open:hover { text-decoration: underline; }
     font-size: 12px; line-height: 1.4; padding: 3px 10px; white-space: nowrap;
   }
   #printHost table.report-table th.shirtsum, #printHost table.report-table td.shirtsum { text-align: left; }
+  /* Report builder output (printGenReport()) — packed tightly to maximize rows
+     per page, spread across the page width, headers repeated on every page and
+     no row split across a page break. Same rules as the CarShow app. */
+  #printHost table.dense-report-table { width: 100%; }
+  #printHost table.dense-report-table th, #printHost table.dense-report-table td {
+    font-size: 10px; line-height: 1.15; padding: 1px 4.8px;
+  }
+  #printHost table.dense-report-table thead { display: table-header-group; }
+  #printHost table.dense-report-table tr { page-break-inside: avoid; break-inside: avoid; }
   /* Window cards (printWindowCards() in app.js) are no longer printed via
      this page's own @media print rules — they're generated as a real,
      separately-opened PDF (the uploaded fillable template, filled per
