@@ -678,6 +678,14 @@ function vettefest_write_raw($file, $content) {
 // happen in practice — vettefest_run_backup() always includes the whole
 // data/ tree together — but handled defensively) falls back to "Event
 // <year>".
+//
+// A year can legitimately appear in shows.json with ZERO data/<year>/ files
+// — an event created right before the backup was taken, before anything
+// else was ever saved to it. That's still real, restorable data (the
+// event's own name/status), not "nothing" — so it's listed here too
+// (fileCount: 0), rather than silently vanishing from the Restore dropdown
+// the way it did before this was noticed (a fresh event backed up
+// immediately couldn't be restored, or even selected, at all).
 function vettefest_backup_years_in_zip($backupDir, $fileName) {
     $path = vettefest_backup_zip_path($backupDir, $fileName);
     if ($path === null) return null;
@@ -704,8 +712,13 @@ function vettefest_backup_years_in_zip($backupDir, $fileName) {
     }
     $zip->close();
 
+    // Union of "has files" and "has a shows.json row" — either alone is
+    // enough to make a year worth offering.
+    $allYears = $fileCounts;
+    foreach ($shows as $year => $s) { if (!array_key_exists($year, $allYears)) $allYears[$year] = 0; }
+
     $years = [];
-    foreach ($fileCounts as $year => $count) {
+    foreach ($allYears as $year => $count) {
         $s = $shows[$year] ?? null;
         $years[] = [
             'year' => $year,
@@ -773,8 +786,23 @@ function vettefest_restore_backup($backupDir, $fileName, $year = null) {
     }
     $zip->close();
 
-    if ($year !== null && empty($writes)) {
-        return ['ok' => false, 'error' => "This backup has no data for event $year."];
+    // A year with a real row in the backup's shows.json but zero actual
+    // data files is a legitimate, meaningful thing to restore (its
+    // name/status, from an event created right before that backup was
+    // taken, before anything else was ever saved to it) — NOT the same as
+    // "this year isn't in the backup at all". So the two are checked
+    // together: only truly nothing (no files AND no registry row) fails.
+    $backupEntry = null;
+    if ($year !== null && $showsJsonRaw !== null) {
+        $backupShows = json_decode($showsJsonRaw, true);
+        if (is_array($backupShows) && !empty($backupShows['shows']) && is_array($backupShows['shows'])) {
+            foreach ($backupShows['shows'] as $s) {
+                if (is_array($s) && isset($s['year']) && (string)$s['year'] === $year) { $backupEntry = $s; break; }
+            }
+        }
+    }
+    if ($year !== null && empty($writes) && $backupEntry === null) {
+        return ['ok' => false, 'error' => "This backup has no data, and no events-list entry, for event $year."];
     }
 
     // Safety net first, regardless of scope — cheap, and keeps the recovery
@@ -829,31 +857,23 @@ function vettefest_restore_backup($backupDir, $fileName, $year = null) {
     // dropped it somehow) from the BACKUP's shows.json — every other year's
     // row, and 'current', stay exactly as they are live. Mirrors SAM
     // restoring just one auction's row in its 'auctions' table on a scoped
-    // restore, not the whole table.
-    if ($year !== null && $showsJsonRaw !== null) {
-        $backupShows = json_decode($showsJsonRaw, true);
-        $backupEntry = null;
-        if (is_array($backupShows) && !empty($backupShows['shows']) && is_array($backupShows['shows'])) {
-            foreach ($backupShows['shows'] as $s) {
-                if (is_array($s) && isset($s['year']) && (string)$s['year'] === $year) { $backupEntry = $s; break; }
+    // restore, not the whole table. $backupEntry was already resolved above
+    // (needed there too, for the "nothing to restore" guard).
+    if ($year !== null && $backupEntry !== null) {
+        $registry = vettefest_read_shows();
+        $found = false;
+        foreach ($registry['shows'] as $idx => $s) {
+            if (is_array($s) && isset($s['year']) && (string)$s['year'] === $year) {
+                $registry['shows'][$idx] = $backupEntry;
+                $found = true;
+                break;
             }
         }
-        if ($backupEntry !== null) {
-            $registry = vettefest_read_shows();
-            $found = false;
-            foreach ($registry['shows'] as $idx => $s) {
-                if (is_array($s) && isset($s['year']) && (string)$s['year'] === $year) {
-                    $registry['shows'][$idx] = $backupEntry;
-                    $found = true;
-                    break;
-                }
-            }
-            if (!$found) $registry['shows'][] = $backupEntry;
-            if (!vettefest_write_shows($registry)) {
-                return ['ok' => false, 'error' => "Restored event $year's data, but could not update its entry in the events list. A pre-restore safety backup was taken first — see the Backups log.", 'preRestoreBackup' => $preRestore['fileName']];
-            }
-            $scopeName = (string)($backupEntry['name'] ?? $year);
+        if (!$found) $registry['shows'][] = $backupEntry;
+        if (!vettefest_write_shows($registry)) {
+            return ['ok' => false, 'error' => "Restored event $year's data, but could not update its entry in the events list. A pre-restore safety backup was taken first — see the Backups log.", 'preRestoreBackup' => $preRestore['fileName']];
         }
+        $scopeName = (string)($backupEntry['name'] ?? $year);
     }
 
     return [
