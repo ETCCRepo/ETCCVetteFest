@@ -1376,16 +1376,13 @@ having the token; see that section and "Known follow-ups" for the exact command.
     path wasn't in scope for that change. Low-stakes (a few small `.log` files sitting
     unused on disk, not a data-integrity issue) but worth fixing in `shows.php`'s
     `delete` action next time someone's in there.
-14. **Restore has now been exercised live by the user, not just by API calls** — their
-    2026-09-14 report ("11:43 backup does not restore for the 2027 Vette Fest") came from
-    actually using the Restore modal, which is what surfaced the real bug fixed the same
-    day (see that session's entry): a just-created event with no data yet neither
-    appeared in the scope dropdown nor could be restored if asked for directly, both
-    fixed and re-verified via direct API calls afterward. What's still unconfirmed by
-    Claude specifically is a full click-through of the fixed version — the user hasn't
-    said whether the dropdown now shows a zero-file event correctly in the browser
-    itself, only that the underlying bug they hit is gone. Worth a quick look next time
-    Setup tab work happens, not urgent.
+14. **Restore is fully confirmed working, end to end.** The user's 2026-09-14 report
+    ("11:43 backup does not restore for the 2027 Vette Fest") came from actually using
+    the Restore modal, surfacing the real bug fixed the same day: a just-created event
+    with no data yet neither appeared in the scope dropdown nor could be restored if
+    asked for directly. Fixed, re-verified via direct API calls, and then the user
+    clicked through the (fixed) Restore modal in the browser themselves and confirmed it
+    works. Nothing further to track from this.
 
 ## Architecture notes worth preserving
 
