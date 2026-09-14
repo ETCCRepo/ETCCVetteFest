@@ -557,7 +557,7 @@ table.report-preview-table th, table.report-preview-table td { font-size: 10px; 
   <div id="app"></div>
 </div>
 <footer class="app-footer">
-  <div class="footer-line"><span>v2.50 &middot; Deployed 09/14/2026 03:52 PM</span> &middot; <span>Website by Business Web Express &middot; <a href="https://businesswebexpress.com" target="_blank" rel="noopener">businesswebexpress.com</a></span> &middot; <span>&copy; 2026 East Tennessee Corvette Club &middot; Knoxville, TN &middot; <a href="mailto:etccwebsite.webmanager@gmail.com">etccwebsite.webmanager@gmail.com</a></span></div>
+  <div class="footer-line"><span>v2.51 &middot; Deployed 09/14/2026 04:05 PM</span> &middot; <span>Website by Business Web Express &middot; <a href="https://businesswebexpress.com" target="_blank" rel="noopener">businesswebexpress.com</a></span> &middot; <span>&copy; 2026 East Tennessee Corvette Club &middot; Knoxville, TN &middot; <a href="mailto:etccwebsite.webmanager@gmail.com">etccwebsite.webmanager@gmail.com</a></span></div>
 </footer>
 <script>
 /* @license
@@ -2377,8 +2377,6 @@ window.__vettefestReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQ
       .concat([el("label", { title: "Only registrants who volunteered to judge (CSJ = Yes)" },
       [judgeCb, document.createTextNode(" Judge")])]));
 
-    var prn = el("button", { class: "btn" }, ["🖨 Print"]);
-    prn.addEventListener("click", printRegistration);
 
     var xls = el("button", { class: "btn" }, ["⬇ Excel"]);
     xls.addEventListener("click", exportExcel);
@@ -2397,7 +2395,7 @@ window.__vettefestReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQ
 
     var count = el("span", { class: "count", id: "rowcount" });
     return el("div", { class: "toolbar no-print" },
-      [search, statusGroup, count, el("span", { class: "spacer" }), zoomGroup, xls, delBtn, prn]);
+      [search, statusGroup, count, el("span", { class: "spacer" }), zoomGroup, xls, delBtn]);
   }
   function buildSummaryToolbar() {
     var xls = el("button", { class: "btn" }, ["⬇ Excel"]);
@@ -2442,28 +2440,6 @@ window.__vettefestReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQ
   }
   function buildPrintFooter() {
     return el("div", { class: "print-report-foot", text: "Report Date: " + fmtDate(new Date()) });
-  }
-
-  function printRegistration() {
-    var host = $("#printHost");
-    host.innerHTML = "";
-    // Every column except the 12 individual shirt buckets, which are replaced
-    // by the same "Shirts" summary column the on-screen table uses.
-    var cols = state.result.columns.filter(function (c) { return !isShirtCol(c); });
-    var headerLabels = cols.concat(["Shirts"]);
-    var thead = el("thead", {}, [el("tr", {}, headerLabels.map(function (c) { return el("th", {}, [c]); }))]);
-    var tbody = el("tbody", {}, visibleRows().map(function (r) {
-      var cells = cols.map(function (c) {
-        var v = CURRENCY_COLS[c] ? fmtMoney(r[c]) : DATE_COLS[c] ? fmtCsvDate(r[c]) : r[c];
-        return el("td", {}, [v == null ? "" : String(v)]);
-      });
-      cells.push(el("td", { class: "shirtsum" }, [shirtSummaryText(r)]));
-      return el("tr", {}, cells);
-    }));
-    host.appendChild(buildPrintHeader(state.result.meta.title));
-    host.appendChild(el("table", { class: "grid" }, [thead, tbody]));
-    host.appendChild(buildPrintFooter());
-    window.print();
   }
 
   // Base (non-shirt) columns, plus one "Shirts" summary column standing in for
@@ -3268,10 +3244,8 @@ window.__vettefestReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQ
 
     var orderBtn = el("button", { class: "btn primary" }, ["📧 T-Shirt Order Form"]);
     orderBtn.addEventListener("click", openTshirtOrderPage);
-    var reportBtn = el("button", { class: "btn" }, ["📊 T-Shirt Report"]);
-    reportBtn.addEventListener("click", function () { openGenReportPage(TSHIRT_REPORT_SPEC); });
     wrap.appendChild(el("div", { class: "panel" }, [
-      el("div", { class: "settings-actions" }, [orderBtn, reportBtn])
+      el("div", { class: "settings-actions" }, [orderBtn])
     ]));
 
     return wrap;

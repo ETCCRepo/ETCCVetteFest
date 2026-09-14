@@ -670,8 +670,6 @@
       .concat([el("label", { title: "Only registrants who volunteered to judge (CSJ = Yes)" },
       [judgeCb, document.createTextNode(" Judge")])]));
 
-    var prn = el("button", { class: "btn" }, ["🖨 Print"]);
-    prn.addEventListener("click", printRegistration);
 
     var xls = el("button", { class: "btn" }, ["⬇ Excel"]);
     xls.addEventListener("click", exportExcel);
@@ -690,7 +688,7 @@
 
     var count = el("span", { class: "count", id: "rowcount" });
     return el("div", { class: "toolbar no-print" },
-      [search, statusGroup, count, el("span", { class: "spacer" }), zoomGroup, xls, delBtn, prn]);
+      [search, statusGroup, count, el("span", { class: "spacer" }), zoomGroup, xls, delBtn]);
   }
   function buildSummaryToolbar() {
     var xls = el("button", { class: "btn" }, ["⬇ Excel"]);
@@ -735,28 +733,6 @@
   }
   function buildPrintFooter() {
     return el("div", { class: "print-report-foot", text: "Report Date: " + fmtDate(new Date()) });
-  }
-
-  function printRegistration() {
-    var host = $("#printHost");
-    host.innerHTML = "";
-    // Every column except the 12 individual shirt buckets, which are replaced
-    // by the same "Shirts" summary column the on-screen table uses.
-    var cols = state.result.columns.filter(function (c) { return !isShirtCol(c); });
-    var headerLabels = cols.concat(["Shirts"]);
-    var thead = el("thead", {}, [el("tr", {}, headerLabels.map(function (c) { return el("th", {}, [c]); }))]);
-    var tbody = el("tbody", {}, visibleRows().map(function (r) {
-      var cells = cols.map(function (c) {
-        var v = CURRENCY_COLS[c] ? fmtMoney(r[c]) : DATE_COLS[c] ? fmtCsvDate(r[c]) : r[c];
-        return el("td", {}, [v == null ? "" : String(v)]);
-      });
-      cells.push(el("td", { class: "shirtsum" }, [shirtSummaryText(r)]));
-      return el("tr", {}, cells);
-    }));
-    host.appendChild(buildPrintHeader(state.result.meta.title));
-    host.appendChild(el("table", { class: "grid" }, [thead, tbody]));
-    host.appendChild(buildPrintFooter());
-    window.print();
   }
 
   // Base (non-shirt) columns, plus one "Shirts" summary column standing in for
@@ -1561,10 +1537,8 @@
 
     var orderBtn = el("button", { class: "btn primary" }, ["📧 T-Shirt Order Form"]);
     orderBtn.addEventListener("click", openTshirtOrderPage);
-    var reportBtn = el("button", { class: "btn" }, ["📊 T-Shirt Report"]);
-    reportBtn.addEventListener("click", function () { openGenReportPage(TSHIRT_REPORT_SPEC); });
     wrap.appendChild(el("div", { class: "panel" }, [
-      el("div", { class: "settings-actions" }, [orderBtn, reportBtn])
+      el("div", { class: "settings-actions" }, [orderBtn])
     ]));
 
     return wrap;
