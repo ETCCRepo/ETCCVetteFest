@@ -2903,6 +2903,14 @@
 
   // Shared by all three reports — they all read the same registration row.
   function regRowFieldText(r, key) {
+    // A T-Shirt Report row is ONE shirt (see expandShirtRows()); every other
+    // report's row is a whole registration, whose Shirts cell summarizes all.
+    if (r.__shirtBucket) {
+      var b = r.__shirtBucket;
+      if (key === "shirts") return b.col;
+      if (key === "shirtSize") return shirtSizeLabel(b.sizeKey);
+      if (key === "shirtType") return b.groupKey;
+    }
     if (key === "shirts") return shirtSummaryText(r);
     if (key === "Phone") return fmtPhone(r["Phone"]) || "";
     if (key === "Reg Date") return r["Reg Date"] ? fmtCsvDate(r["Reg Date"]) : "";
@@ -2916,6 +2924,13 @@
       var d = r["Reg Date"] ? new Date(r["Reg Date"]) : null;
       return d && !isNaN(d.getTime()) ? d.getTime() : -Infinity;
     }
+    // Size order (Small → 3XL), not alphabetical, then Free before Xtra.
+    if (r.__shirtBucket && (key === "shirts" || key === "shirtSize" || key === "shirtType")) {
+      var sb = r.__shirtBucket;
+      var si = shirtSizeIndex(sb.sizeKey), gi = shirtGroupIndex(sb.groupKey);
+      if (key === "shirtType") return gi * 100 + si;
+      return si * 100 + gi;
+    }
     if (key === "shirts") return shirtTotal(r);
     if (REPORT_NUMERIC_KEYS[key]) {
       var n = Number(r[key]);
@@ -2926,6 +2941,38 @@
     // before the builder existed.
     var t = regRowFieldText(r, key).toLowerCase();
     return t === "" ? "￿" : t;
+  }
+
+  function shirtSizeIndex(sizeKey) {
+    for (var i = 0; i < CONFIG.SIZES.length; i++) if (CONFIG.SIZES[i].key === sizeKey) return i;
+    return 99;
+  }
+  function shirtGroupIndex(groupKey) {
+    for (var i = 0; i < CONFIG.GROUPS.length; i++) if (CONFIG.GROUPS[i].key === groupKey) return i;
+    return 99;
+  }
+  function shirtSizeLabel(sizeKey) {
+    var sz = CONFIG.SIZES[shirtSizeIndex(sizeKey)];
+    return sz ? sz.label : sizeKey;
+  }
+  // Normalizes registrations into one row PER SHIRT, so a member who bought
+  // several ("Free XLG, Xtra LG", or "Xtra XLG ×2") gets a row for each and
+  // the report can sort by size. Each copy keeps every registration field
+  // (names, Reg #, status...) plus __shirtBucket, the one shirt it stands for.
+  function expandShirtRows(rows) {
+    var out = [];
+    rows.forEach(function (r) {
+      CONFIG.SHIRT_BUCKETS.forEach(function (b) {
+        var qty = Number(r[b.col]) || 0;
+        for (var i = 0; i < qty; i++) {
+          var copy = {};
+          Object.keys(r).forEach(function (k) { copy[k] = r[k]; });
+          copy.__shirtBucket = b;
+          out.push(copy);
+        }
+      });
+    });
+    return out;
   }
 
   var REG_REPORT_ALL_COLS = [
@@ -2993,16 +3040,22 @@
   var TSHIRT_REPORT_SPEC = {
     id: "tshirt",
     title: "T-Shirt Report",
-    allCols: REG_REPORT_ALL_COLS,
+    // Rows here are single shirts, so "Shirts" is that one shirt and Size/Type
+    // split it out; all three sort in size order.
+    allCols: REG_REPORT_ALL_COLS.concat([
+      { key: "shirtSize", label: "Size" },
+      { key: "shirtType", label: "Free/Xtra" }
+    ]),
     defaultKeys: ["Reg #", "Last Name", "First Name(s)", "shirts"],
     defaultSortKey: "Last Name",
     emptyText: "No paid registrations with shirts to report yet.",
-    // Only paid registrations get a shirt, and only ones that ordered any.
+    // Only paid registrations get a shirt — one row per shirt.
     getRows: function () {
-      return allRegistrations().filter(function (r) {
+      return expandShirtRows(allRegistrations().filter(function (r) {
         return classifyStatus(r["Status"]) === "paid" && shirtTotal(r) > 0;
-      });
+      }));
     },
+    printTitle: function (rows) { return "T-Shirt Report — " + rows.length + " shirts"; },
     // The size x Free/Xtra totals the old fixed report printed under its table.
     extra: function () {
       return el("div", { class: "panel", style: "margin-top:14px; max-width:420px" }, [
