@@ -2127,13 +2127,17 @@
       el("div", { class: "form-row sched" }, [
         el("span", { class: "form-label", text: "Scheduled Task" }),
         el("div", {}, [
+          // install-scheduled-task.cmd is a plain launcher for the repo's
+          // install-scheduled-task.ps1 (-Interactive); it's uploaded by
+          // ftp-deploy.sh and holds no secrets, only the local repo path.
+          el("div", {}, [
+            el("a", { class: "btn btn-sm", href: "install-scheduled-task.cmd", download: "install-scheduled-task.cmd" },
+              ["⬇ Download task installer"])
+          ]),
           el("div", { class: "setup-hint" }, [
-            "The poller is the Windows Task Scheduler task \"vettefest-sync-registrations\", running " +
-            "deploy/sync-registrations.js — a different thing from the \"Last run\" line above, which only " +
-            "reflects an actual import attempt (most checks find nothing due and leave no trace). To see " +
-            "whether the poller itself is alive, open Task Scheduler on that machine and check the task's " +
-            "Last Run Time and Last Run Result (0 = fine). If an import reports \"ClubExpress session not " +
-            "logged in\", run deploy/clubexpress-login.js there and sign in with Remember Me ticked."
+            "Windows task \"vettefest-sync-registrations\" checks in every 15 minutes. Run the installer on the " +
+            "machine with the repo to create it. Healthy = Task Scheduler's Last Run Result 0. " +
+            "If imports say \"not logged in\", run deploy/clubexpress-login.js and tick Remember Me."
           ])
         ])
       ]),

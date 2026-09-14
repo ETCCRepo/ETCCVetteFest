@@ -114,6 +114,7 @@ upload "reset-password.php"
 upload "dev-forgot-password.php"
 upload "dev-reset-password.php"
 upload "logout.php"
+upload "install-scheduled-task.cmd"
 
 upload "ETCClogoWhiteBackground.png" "$DIR/../assets/ETCClogoWhiteBackground.png"
 upload ".htaccess"
