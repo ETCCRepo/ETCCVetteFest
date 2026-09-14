@@ -1,6 +1,14 @@
 # ETCC Vette Fest App — Project Status
 
-Last updated: 2026-09-14 (end of session). **No app code changed.** The
+Last updated: 2026-09-14 (end of a later session that day). **Added database restore to
+the Setup tab's Backups panel** — restore everything, or just one event, from any
+successful backup, modeled on the sibling SilentAuctionManager app's restore feature.
+Shipped v2.44 (`8a719f2`). Verified against the live server: both scope kinds (a specific
+event, and everything) tested for real, each correctly preceded by an automatic safety
+backup; a real bug in the per-event name/status merge was caught and fixed before this was
+called done — see "This session's work (2026-09-14 — Backup restore)".
+
+Previous update: 2026-09-14 (end of session). **No app code changed.** The
 `/ETCCVetteFestBackup` skill now writes **two** zips per run to `Z:\Backup\websites\VF\Backup`
 (live `data/` tree + the whole local repo folder, same timestamp, no log file), and a
 bump-only checkpoint shipped v2.42 (`7d03767`). See "This session's work (2026-09-14 —
@@ -118,11 +126,11 @@ automated coverage — all of it was verified by hand against the live 2026 even
 (see the session entries below). The count stays at 85 because none of that work touched
 `logic.js`.
 
-**Version:** `App/version.json` — stamped **2.42** in the currently-live
+**Version:** `App/version.json` — stamped **2.44** in the currently-live
 `App/ETCCVetteFest.html` / `app-bundle.html` on the server (built and deployed 2026-09-14
-09:21, checkpoint commit `7d03767`). The file itself now reads `{major:2, minor:43}`,
-since `build.js` bumps-and-stores the *next* version on every run — the next build will
-stamp "2.43". **Gaps in the version sequence are normal, not lost work:** `build.js` bumps
+15:38, commit `8a719f2`). The file itself now reads `{major:2, minor:45}`, since
+`build.js` bumps-and-stores the *next* version on every run — the next build will stamp
+"2.45". **Gaps in the version sequence are normal, not lost work:** `build.js` bumps
 on *every* run, including rebuilds that were never committed or deployed, which is why the
 shipped history reads 2.11, 2.12, 2.13, 2.15, 2.17, 2.18, 2.20, 2.22, 2.23, 2.27, 2.34,
 2.37, 2.38, 2.40, 2.41.
@@ -202,6 +210,90 @@ copy.
 **Git: pushed and working**, as of 2026-08-27 — see that session's entry below for the
 one gotcha (a global credential helper that must be worked around on every push from this
 machine).
+
+## This session's work (2026-09-14 — Backup restore)
+
+Added a database restore to the Setup tab's Backups panel, modeled on the sibling
+SilentAuctionManager app's `restore_backup` feature, adapted for a file-tree "database"
+instead of a SQL one. Shipped as **v2.44** (`8a719f2`).
+
+### What was added
+
+- **`lib.php`**: `vettefest_backup_years_in_zip()` lists the distinct event years inside a
+  backup zip, with real names/status read from that zip's own `data/shows.json` — powers
+  the Restore modal's scope picker. `vettefest_restore_backup()` does the actual work:
+  `$year === null` restores **everything** (every event, `data/shows.json`, both global
+  password-reset files) so the live tree matches the backup **exactly** — a year directory
+  or global file that's live now but wasn't in the backup is *deleted*, not left alone,
+  same choice SAM's own whole-database restore makes for its SQL tables. A given `$year`
+  restores only that event's `data/<year>/` directory plus its own row in `shows.json`,
+  leaving every other year and both global files untouched. Every `.json` entry about to
+  be written is decoded and validated **before** anything on disk is touched — a corrupted
+  backup aborts with nothing changed. A fresh whole-data safety backup is **always** taken
+  first, regardless of scope, so a bad restore is itself always recoverable.
+  `vettefest_write_raw()` writes bytes verbatim (no `json_encode` re-serialize) so
+  `flyer.json`'s base64 payload survives byte-for-byte. `vettefest_rrmdir()` is a new
+  recursive delete the restore needs — `data/<year>/` now legitimately holds a
+  subdirectory (`logs/`, added when the sync task moved off Claude), which
+  `shows.php`'s own flat, one-level event-delete still doesn't account for. **Not fixed
+  here** — out of scope for this change, but worth knowing: deleting an event through the
+  normal UI currently leaves that year's `logs/` folder orphaned on the server.
+- **`backup.php`**: two new actions. `get_backup_years` (read-only, same auth as
+  everything else in the file) and `restore`, which requires the **Developer password**,
+  not just the site password everything else in `backup.php` uses. This follows an
+  existing precedent in this codebase rather than inventing a new gate —
+  `shows.php`'s own event-delete action already requires the Developer password for
+  exactly this reason (destroying a whole year of data). Both the pre-restore safety
+  snapshot and the restore itself get their own `backup-history.json` entries (reasons
+  `'pre-restore'` and `'restore'`), same log a normal backup writes to.
+- **`app.js`**: a "↺ Restore" button on each real (non-restore-record) successful backup
+  row, opening a modal. **Deliberately not a copy of SAM's UI** — SAM uses
+  `prompt()`/`confirm()`/`alert()` for this, and says explicitly in its own comment that's
+  a deliberately minimal choice for a rare action rather than building modal markup just
+  for it. This app already has that markup (`renderDeleteShowConfirm()`'s
+  Developer-password-in-a-modal pattern), so the restore modal reuses that shape instead:
+  a scope `<select>` populated from `get_backup_years` (loaded fresh every time the modal
+  opens, since which events a backup contains is a property of the file, not something
+  worth caching), a strong warning that changes with the scope selected, a Developer
+  password field, Enter-to-submit. On success the **whole page reloads** — same choice SAM
+  makes, since a restore can touch far more than any single piece of app state could
+  safely patch in place (registrations, overrides, settings, the flyer, even which events
+  exist at all). The Trigger label and Details column in the backup log now handle
+  `reason: 'restore'` / `'pre-restore'` rows, which have no download link of their own —
+  a `'restore'` row shows what it restored from and the scope, or the error if it failed.
+
+### A real bug, caught by testing against production rather than left in
+
+The first live test of a **scoped** restore returned `scopeName: "2026"` instead of the
+real event name "2026 Vette Fest". Root cause: the scoped-restore filter correctly
+excludes `data/shows.json` from the set of files actually **written** (it must never be
+overwritten wholesale — that would silently reset every other year's registry row too),
+but the same filter also meant it was never available for the *read-only* per-year merge
+that was supposed to update just that one year's name/status — so the merge silently
+no-op'd every time, defeating the point of it in every scoped restore before this was
+caught. Fixed by reading `data/shows.json` separately, read-only, regardless of scope, so
+the write-exclusion and the merge-read are no longer the same variable. Re-tested and
+confirmed fixed (`scopeName: "2026 Vette Fest"`) before this was called done.
+
+### Verification — real production calls, both restore paths
+
+- `get_backup_years` correctly listed the 2026 event's real name and file count from
+  inside a real backup on the live server.
+- The Developer-password gate correctly refused both a missing password and a wrong one —
+  confirmed via the history log that **no restore was attempted** in either case (the gate
+  runs before any lookup or file access).
+- A **scoped** restore of the 2026 event and a **whole** restore both succeeded against
+  production, each correctly preceded by its own safety backup. `shows.json`,
+  `app-settings.json`, the flyer, and the full import-history log were all confirmed
+  intact afterward via `refresh.php` — nothing was lost or corrupted by either test.
+- The Developer password itself was never typed, displayed, or hardcoded by this session.
+  `PROJECT_STATUS.md` already records (2026-09-09 entry) that the Developer password was
+  set equal to the site password at the user's request — so the already-authorized
+  `VETTEFEST_SITE_PASSWORD` env var (used for every API call all session) was reused for
+  the `devPassword` field too, the same sanctioned mechanism, not a new secret handled.
+- **Not verified: an actual click-through of the Restore modal in a live, authenticated
+  browser session** — same limitation as the Setup tab autosave work two sessions ago.
+  Logging into the app's own login form is outside what this session did itself.
 
 ## This session's work (2026-09-14 — backup skill)
 
@@ -1195,6 +1287,23 @@ having the token; see that section and "Known follow-ups" for the exact command.
     toggling a checkbox, adding/removing a time, and changing a date all show "Saving…"
     → "Saved." with no button, in a real logged-in browser session. Nothing further to
     track from this.
+13. **Deleting an event through the normal UI (shows.php) leaves that year's
+    `data/<year>/logs/` folder behind, orphaned.** `vettefest_show_files()` — the list
+    that action deletes — is still a flat list of files, from before the sync task's own
+    per-run logs (a subdirectory) existed. Found while building the v2.44 restore feature
+    (which needed its own recursive delete, `vettefest_rrmdir()`, for exactly this
+    reason) but **deliberately not fixed** there — touching `shows.php`'s event-delete
+    path wasn't in scope for that change. Low-stakes (a few small `.log` files sitting
+    unused on disk, not a data-integrity issue) but worth fixing in `shows.php`'s
+    `delete` action next time someone's in there.
+14. **Restore (v2.44) has not been confirmed in a live, logged-in browser session** —
+    only by direct API calls against production (both scope kinds tested for real,
+    including the Developer-password gate correctly refusing a missing/wrong password),
+    plus code review of the modal itself. Logging into the app's own login form to click
+    through the Restore modal was out of scope for that session, same limitation
+    autosave (v2.40) had. If a future session needs to know whether the modal itself
+    works end-to-end — the scope dropdown populating, the warning text, Enter-to-submit —
+    ask rather than assume either way.
 
 ## Architecture notes worth preserving
 
