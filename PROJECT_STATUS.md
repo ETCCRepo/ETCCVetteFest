@@ -1,6 +1,16 @@
 # ETCC Vette Fest App — Project Status
 
-Last updated: 2026-09-14 (end of a third session that day). **Two user-reported bugs
+Last updated: 2026-09-14 (end of a fourth session that day). **Registration Report,
+Car Show Report and T-Shirt Report now open a print preview + column/sort builder screen**
+(ported from the sibling CarShow app), replacing print-immediately buttons. The T-Shirt
+Report also normalizes multi-shirt registrations into one row per shirt so it can sort by
+size, and every builder gained multi-column sort ("Sort by" / "Then by" levels). The
+Import Schedule panel also gained a downloadable scheduled-task installer and a shorter
+hint. The Registration tab's Print button and the T-Shirts tab's T-Shirt Report button
+were removed (both fully covered by the Reports tab now). Shipped v2.46 → v2.52 across
+six commits; see "This session's work (2026-09-14 — report builders)".
+
+Previous update: 2026-09-14 (end of a third session that day). **Two user-reported bugs
 fixed, both verified live**: restore couldn't offer or restore an event that had just
 been created with no data yet (a real gap in v2.44's own logic, not a stale assumption —
 see follow-up items below for what changed), and Logout redirected off-site to the club's
@@ -133,11 +143,11 @@ automated coverage — all of it was verified by hand against the live 2026 even
 (see the session entries below). The count stays at 85 because none of that work touched
 `logic.js`.
 
-**Version:** `App/version.json` — stamped **2.45** in the currently-live
+**Version:** `App/version.json` — stamped **2.52** in the currently-live
 `App/ETCCVetteFest.html` / `app-bundle.html` on the server (built and deployed 2026-09-14
-15:55, commit `0455b7c`). The file itself now reads `{major:2, minor:46}`, since
-`build.js` bumps-and-stores the *next* version on every run — the next build will stamp
-"2.46". **Gaps in the version sequence are normal, not lost work:** `build.js` bumps
+20:05, checkpoint commit `873c117`). The file itself now reads `{major:2, minor:53}`,
+since `build.js` bumps-and-stores the *next* version on every run — the next build will
+stamp "2.53". **Gaps in the version sequence are normal, not lost work:** `build.js` bumps
 on *every* run, including rebuilds that were never committed or deployed, which is why the
 shipped history reads 2.11, 2.12, 2.13, 2.15, 2.17, 2.18, 2.20, 2.22, 2.23, 2.27, 2.34,
 2.37, 2.38, 2.40, 2.41.
@@ -217,6 +227,71 @@ copy.
 **Git: pushed and working**, as of 2026-08-27 — see that session's entry below for the
 one gotcha (a global credential helper that must be worked around on every push from this
 machine).
+
+## This session's work (2026-09-14 — report builders)
+
+**1. Task installer download + shorter hint** (v2.46, `eabfcaa`). New
+`App/deploy/install-scheduled-task.cmd` — a double-click launcher for
+`install-scheduled-task.ps1 -Interactive` (the no-admin-needed mode), uploaded by
+`ftp-deploy.sh`, linked from the Setup tab's Scheduled Task row as **⬇ Download task
+installer**. Holds no secrets, only the local repo path; stops with `pause` so its output
+can be read. The row's explanatory text was cut from five sentences to three.
+
+**2. Report preview + builder, ported from CarShow, for all three data reports**
+(v2.48, `639e820`). Registration Report, Car Show Report and T-Shirt Report each used to
+build an HTML table straight into `#printHost` and call `window.print()` immediately.
+They now open a full-page screen (`renderGenReportPage()`): a live print preview on the
+left, a collapsible builder on the right (Available/In Report column panels with
++/✕/drag-to-reorder/Add All/Remove All, a sort picker, Reset to Default), Print in the
+banner, Escape/← Back to close. `GEN_REPORT_SPECS` = `[REG_REPORT_SPEC, CARSHOW_REPORT_SPEC,
+TSHIRT_REPORT_SPEC]`, each declaring `allCols`/`defaultKeys`/`defaultSortKey`/`getRows`/
+`cellText`/`sortValue`, so the same generic `genReport*`/`buildGenReport*` functions drive
+all three (and the T-Shirts tab's T-Shirt Report button opens the same
+`TSHIRT_REPORT_SPEC` screen). Defaults reproduce each report's old fixed layout exactly:
+Car Show still filters `SHW = Yes` and titles itself with the entry count; T-Shirt still
+appends the size-totals matrix; a blank sort value sorts last; ties break by Reg #. Any
+registration column can be added to any of the three. Layouts persist per event in
+`app-settings.json` under `<id>ReportColumns`/`SortCol`/`SortDir` — nine new keys added to
+`vettefest_settings_defaults()` in `lib.php` (an unlisted key is silently dropped by
+`app-settings.php`'s `array_intersect_key`). Print output reuses CarShow's
+`dense-report-table` CSS (repeated headers, no split rows) — new screen-mode
+`.report-builder-body`/`.report-col-*`/`.report-preview-*` rules ported into `styles.css`
+alongside it.
+
+**3. T-Shirt Report: one row per shirt, sortable by size** (v2.49, `8c12f9d`), from a
+follow-up screenshot showing "Free XLG, Xtra LG" as one unsortable row. New
+`expandShirtRows()` turns each qualifying registration into one copy per shirt bucket
+(walking `CONFIG.SHIRT_BUCKETS`, respecting quantity — `Xtra XLG ×2` becomes two rows),
+each copy carrying every registration field plus `__shirtBucket`. On those rows `Shirts` is
+the single shirt; two new columns `Size`/`Free-Xtra` split it out. All three sort in real
+size order (`CONFIG.SIZES` index, Small→3XL) with Free before Xtra — not alphabetically,
+not by original shirt count. Title becomes "T-Shirt Report — N shirts". Registration
+Report and Car Show Report are untouched (they still summarize a registration's shirts in
+one cell via the existing `shirtSummaryText()`).
+
+**4. Multi-column sort in every report builder** (v2.50, `1694245`). "Sort by" is now the
+first of any number of levels; "+ Add sort level" appends a "Then by" row (column +
+direction + ✕, one column per level, options exclude columns other levels already use).
+New `<id>ReportSorts` (`[{key, dir}]`) persists the whole list; `ReportSortCol`/`SortDir`
+mirror level 0 so a pre-this-feature saved layout (empty `Sorts`) still sorts by its single
+column. Reset to Default clears `Sorts`. Three more `vettefest_settings_defaults()` keys.
+Verified live: the three new/changed settings keys ( `*ReportColumns`/`*ReportSorts`) round
+-trip through `app-settings.php` on the real 2026 event.
+
+**5. Removed the two buttons the Reports tab now fully covers** (v2.52 chain end,
+`d76722d`), at the user's explicit request after seeing both tabs: the Registration tab's
+🖨 Print button (and its `printRegistration()` full-column table — deleted, no other
+caller) and the T-Shirts tab's 📊 T-Shirt Report button. The Registration tab's toolbar now
+ends `…Excel, Delete`; the T-Shirts tab has only T-Shirt Order Form. Registration Report
+and T-Shirt Report remain on the Reports tab (and the T-Shirts tab's own button is gone,
+not the report itself).
+
+Every step above was verified with fixture data via the browser tool (add/remove/drag/
+sort/reset, per-report isolation, multi-row shirt expansion including a real ×2 case,
+button removal) before deploying; tests stayed 85/85 throughout since none of it touched
+`logic.js`. **Not verified**: actually clicking Print / triggering the browser print dialog
+on any of the three reports, and the live 2026 event's real registration data run through
+the new T-Shirt Report row-expansion.
 
 ## This session's work (2026-09-14 — restore fix + logout fix)
 
