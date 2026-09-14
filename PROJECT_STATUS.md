@@ -1,6 +1,13 @@
 # ETCC Vette Fest App — Project Status
 
-Last updated: 2026-09-14 (end of a later session that day). **Added database restore to
+Last updated: 2026-09-14 (end of a third session that day). **Two user-reported bugs
+fixed, both verified live**: restore couldn't offer or restore an event that had just
+been created with no data yet (a real gap in v2.44's own logic, not a stale assumption —
+see follow-up items below for what changed), and Logout redirected off-site to the club's
+main website instead of returning to this app's own login screen. Checkpoint v2.45
+(`0455b7c`). See "This session's work (2026-09-14 — restore fix + logout fix)".
+
+Previous update: 2026-09-14 (end of a later session that day). **Added database restore to
 the Setup tab's Backups panel** — restore everything, or just one event, from any
 successful backup, modeled on the sibling SilentAuctionManager app's restore feature.
 Shipped v2.44 (`8a719f2`). Verified against the live server: both scope kinds (a specific
@@ -126,11 +133,11 @@ automated coverage — all of it was verified by hand against the live 2026 even
 (see the session entries below). The count stays at 85 because none of that work touched
 `logic.js`.
 
-**Version:** `App/version.json` — stamped **2.44** in the currently-live
+**Version:** `App/version.json` — stamped **2.45** in the currently-live
 `App/ETCCVetteFest.html` / `app-bundle.html` on the server (built and deployed 2026-09-14
-15:38, commit `8a719f2`). The file itself now reads `{major:2, minor:45}`, since
+15:55, commit `0455b7c`). The file itself now reads `{major:2, minor:46}`, since
 `build.js` bumps-and-stores the *next* version on every run — the next build will stamp
-"2.45". **Gaps in the version sequence are normal, not lost work:** `build.js` bumps
+"2.46". **Gaps in the version sequence are normal, not lost work:** `build.js` bumps
 on *every* run, including rebuilds that were never committed or deployed, which is why the
 shipped history reads 2.11, 2.12, 2.13, 2.15, 2.17, 2.18, 2.20, 2.22, 2.23, 2.27, 2.34,
 2.37, 2.38, 2.40, 2.41.
@@ -210,6 +217,79 @@ copy.
 **Git: pushed and working**, as of 2026-08-27 — see that session's entry below for the
 one gotcha (a global credential helper that must be worked around on every push from this
 machine).
+
+## This session's work (2026-09-14 — restore fix + logout fix)
+
+Two fixes, both reported by the user against the live site and both verified live before
+being called done. No feature work — this session only fixed things. Checkpoint **v2.45**
+(`0455b7c`).
+
+### 1. Restore couldn't offer or restore a just-created event with no data yet (`a43483f`)
+
+**User report:** "11:43 backup does not restore for the 2027 Vette Fest." Investigated
+directly against production rather than assumed: the 2027 event had been created via
+`shows.php`'s `create` action (which only ever touches `data/shows.json`) minutes before
+that backup ran, and nothing else had been saved to it yet — so the backup genuinely had
+zero `data/2027/*` files. Confirmed via `get_backup_years` on that exact backup: only 2026
+was listed.
+
+That much is expected — but two real bugs followed from it, both in code from the
+restore feature shipped earlier the same day (v2.44):
+
+1. **`vettefest_backup_years_in_zip()`** (`lib.php`) derived its year list purely from
+   `data/<year>/` file entries in the zip, so a zero-file event never appeared in the
+   Restore modal's dropdown *at all* — not offered, not refused, just invisible.
+2. **`vettefest_restore_backup()`**'s "nothing to restore" guard checked only `$writes`
+   (the set of files to write), which deliberately excludes `data/shows.json` for a
+   scoped restore — so even called directly with `year=2027`, it failed with "no data for
+   event 2027," which was misleading: the backup's own `shows.json` *did* have a real row
+   for 2027 (name, status), which is itself legitimate, restorable data (useful for
+   reverting a rename/status change with nothing else involved).
+
+**Fix:** `vettefest_backup_years_in_zip()` now unions years found in `data/<year>/` files
+with years found only in the backup's `shows.json` (`fileCount: 0` for the latter).
+`vettefest_restore_backup()`'s guard now only fails when *both* are absent — the
+`shows.json` row lookup (`$backupEntry`) was moved earlier in the function and is computed
+once, used both by the guard and by the merge that follows, rather than duplicated.
+
+**Verified live**, not just re-read: `get_backup_years` on the same 11:43:54 backup now
+lists `{year: 2027, name: "2027 Vette Fest", status: "active", fileCount: 0}` alongside
+2026; a scoped restore of `year=2027` from it now succeeds (`filesWritten: 0`,
+`scopeName: "2027 Vette Fest"` — the registry entry restored correctly, nothing else
+touched); the events list confirmed to still hold both 2026 and 2027 intact afterward.
+
+### 2. Logout redirected off-site instead of returning to the login screen (`6334409`)
+
+**User report:** "developer logout screen should return to main menu and not close
+website." `App/deploy/logout.php` destroyed the session then redirected to the club's
+main external website (`etccwebsite.com`) — for a bookmarked or installed shortcut, that
+reads as the Vette Fest app itself closing, not a logout. There is only one Logout action
+in the app (the hamburger menu's "🚪 Logout" — no separate "Developer" logout exists); the
+user's phrasing was almost certainly this same action, encountered while in or near
+Developer mode.
+
+**Fix:** `logout.php` now redirects to `index.php` (relative, same directory) — the exact
+file that already serves the "Enter password" login form for any unauthenticated request.
+Logout now stays on-site and lands back at the app's own entry screen instead of leaving
+the domain entirely.
+
+**Deliberately not changed:** the sibling **CarShow** app's `logout.php` has the identical
+off-site redirect and was left untouched — not asked for, but the same one-line fix if the
+same complaint comes up there.
+
+**Verified live** via raw HTTP, not just the code: `curl -D -` against
+`https://etccapps.com/apps/vettefest/logout.php` shows `Location: index.php`; following
+the redirect (`curl -L`) lands on a page containing "Enter password."
+
+### An unrelated observation, not acted on
+
+While deploying, `App/deploy/secrets.php` on the live server showed a different file size
+(661 → 702 bytes) and a very recent modification time, **despite `ftp-deploy.sh` never
+uploading that file** (confirmed — it's not in the upload list, only mentioned in a
+comment explaining why it's excluded). Something else changed it directly on the server
+around the same time as this session, most likely the user rotating a password hash
+through FTP/hPanel directly. Flagged to the user in-session; not investigated further
+since nothing broke and it's their own credentials file.
 
 ## This session's work (2026-09-14 — Backup restore)
 
@@ -1296,14 +1376,16 @@ having the token; see that section and "Known follow-ups" for the exact command.
     path wasn't in scope for that change. Low-stakes (a few small `.log` files sitting
     unused on disk, not a data-integrity issue) but worth fixing in `shows.php`'s
     `delete` action next time someone's in there.
-14. **Restore (v2.44) has not been confirmed in a live, logged-in browser session** —
-    only by direct API calls against production (both scope kinds tested for real,
-    including the Developer-password gate correctly refusing a missing/wrong password),
-    plus code review of the modal itself. Logging into the app's own login form to click
-    through the Restore modal was out of scope for that session, same limitation
-    autosave (v2.40) had. If a future session needs to know whether the modal itself
-    works end-to-end — the scope dropdown populating, the warning text, Enter-to-submit —
-    ask rather than assume either way.
+14. **Restore has now been exercised live by the user, not just by API calls** — their
+    2026-09-14 report ("11:43 backup does not restore for the 2027 Vette Fest") came from
+    actually using the Restore modal, which is what surfaced the real bug fixed the same
+    day (see that session's entry): a just-created event with no data yet neither
+    appeared in the scope dropdown nor could be restored if asked for directly, both
+    fixed and re-verified via direct API calls afterward. What's still unconfirmed by
+    Claude specifically is a full click-through of the fixed version — the user hasn't
+    said whether the dropdown now shows a zero-file event correctly in the browser
+    itself, only that the underlying bug they hit is gone. Worth a quick look next time
+    Setup tab work happens, not urgent.
 
 ## Architecture notes worth preserving
 
