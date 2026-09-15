@@ -175,7 +175,40 @@
     return ws;
   }
 
-  var API = { build: build };
+  // Exports exactly what a report builder screen (Registration/Car Show/
+  // T-Shirt Report — see buildGenReportPage() in app.js) is currently
+  // showing: its own column selection, sort order and row set, as one
+  // simple sheet — a smaller, report-scoped alternative to build() above's
+  // full four-sheet workbook. cols is genReportColumns(spec) ({key, label}),
+  // rows is genReportSorted(spec), cellText is spec.cellText (row, key) ->
+  // string, same function the on-screen/print table itself uses, so the
+  // export always matches what's in front of the officer.
+  function buildSimple(ExcelJS, title, cols, rows, cellText) {
+    var wb = new ExcelJS.Workbook();
+    var n = cols.length;
+    var ws = wb.addWorksheet("Report", { views: [{ state: "frozen", ySplit: 2 }] });
+    ws.mergeCells(1, 1, 1, n);
+    var t = ws.getCell(1, 1);
+    t.value = title; t.font = { bold: true, size: 16 }; t.alignment = { horizontal: "center" }; t.fill = YELLOW;
+    ws.getRow(1).height = 24;
+    cols.forEach(function (c, i) {
+      var cell = ws.getCell(2, i + 1);
+      cell.value = c.label; cell.font = { bold: true }; cell.fill = GREY; cell.border = border();
+    });
+    ws.getRow(2).height = 22;
+    rows.forEach(function (r, ri) {
+      cols.forEach(function (c, i) {
+        var cell = ws.getCell(ri + 3, i + 1);
+        cell.value = cellText(r, c.key);
+        cell.border = border();
+      });
+    });
+    ws.autoFilter = { from: { row: 2, column: 1 }, to: { row: 2, column: n } };
+    cols.forEach(function (c, i) { ws.getColumn(i + 1).width = Math.max(10, (c.label || "").length + 4); });
+    return wb;
+  }
+
+  var API = { build: build, buildSimple: buildSimple };
   root.VetteFestExcel = API;
   if (typeof module !== "undefined" && module.exports) module.exports = API;
 })(typeof globalThis !== "undefined" ? globalThis : this);

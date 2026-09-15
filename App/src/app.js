@@ -1552,8 +1552,11 @@
   // (plus an optional pageTitle sub-line naming the specific screen) centered
   // — grid layout so the title stays centered regardless of the left
   // content's width. printCallback is optional; when given, a "🖨 Print"
-  // button appears in the banner's upper-right corner.
-  function buildPageBanner(closeCallback, pageTitle, printCallback) {
+  // button appears in the banner's upper-right corner. exportCallback is
+  // likewise optional and, when given, adds a "⬇ Export" button to the LEFT
+  // of Print (added 2026-09-15, at the user's request, for the three report
+  // builder screens — see buildGenReportPage()/exportGenReport()).
+  function buildPageBanner(closeCallback, pageTitle, printCallback, exportCallback) {
     var headerLogo = $("header.app img.hdr-logo");
     var logoImg = headerLogo ? el("img", { src: headerLogo.src, style: "height:40px" }) : null;
     var leftKids = [];
@@ -1566,6 +1569,11 @@
     var centerKids = [el("h2", { text: "Vette Fest Manager", style: "margin: 0" })];
     if (pageTitle) centerKids.push(el("h3", { text: pageTitle, style: "margin: 4px 0 0; color: var(--muted); font-weight: 600" }));
     var rightKids = [];
+    if (exportCallback) {
+      var exportBtn = el("button", { class: "btn" }, ["⬇ Export"]);
+      exportBtn.addEventListener("click", exportCallback);
+      rightKids.push(exportBtn);
+    }
     if (printCallback) {
       var printBtn = el("button", { class: "btn" }, ["🖨 Print"]);
       printBtn.addEventListener("click", printCallback);
@@ -1574,7 +1582,7 @@
     return el("div", { class: "api-page-head", style: "display: grid; grid-template-columns: 1fr auto 1fr; align-items: center" }, [
       el("div", { style: "display: flex; align-items: center; gap: 10px; justify-self: start" }, leftKids),
       el("div", { style: "justify-self: center; text-align: center" }, centerKids),
-      el("div", { style: "justify-self: end" }, rightKids)
+      el("div", { style: "display: flex; align-items: center; gap: 10px; justify-self: end" }, rightKids)
     ]);
   }
 
@@ -3231,6 +3239,26 @@
     host.appendChild(buildPrintFooter());
     window.print();
   }
+  // "⬇ Export" (buildPageBanner) — downloads exactly what's on screen (same
+  // columns, sort, and rows Print would produce) as a small single-sheet
+  // .xlsx, via VetteFestExcel.buildSimple() rather than the full four-sheet
+  // workbook the Summary tab's own "⬇ Excel" button exports.
+  function exportGenReport(spec) {
+    if (!state.result || !state.result.ok) return;
+    var rows = genReportSorted(spec);
+    if (!rows.length) return;
+    var cols = genReportColumns(spec);
+    var wb = window.VetteFestExcel.buildSimple(ExcelJS, genReportTitle(spec, rows), cols, rows, spec.cellText);
+    wb.xlsx.writeBuffer().then(function (buf) {
+      var blob = new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+      var url = URL.createObjectURL(blob);
+      var a = el("a", { href: url, download: genReportTitle(spec, rows) + ".xlsx" });
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+    });
+  }
   function buildGenReportPreview(spec) {
     var cols = genReportColumns(spec);
     var rows = (state.result && state.result.ok) ? genReportSorted(spec) : [];
@@ -3389,7 +3417,7 @@
     host.innerHTML = "";
     if (!state[spec.id + "ReportPageOpen"]) return;
     var page = el("div", { class: "api-page" }, [
-      buildPageBanner(function () { closeGenReportPage(spec); }, spec.title, function () { printGenReport(spec); }),
+      buildPageBanner(function () { closeGenReportPage(spec); }, spec.title, function () { printGenReport(spec); }, function () { exportGenReport(spec); }),
       el("div", { class: "api-page-body report-builder-body" }, [
         buildGenReportPreview(spec),
         buildGenReportBuilder(spec)
