@@ -1,6 +1,17 @@
 # ETCC Vette Fest App — Project Status
 
-Last updated: 2026-09-14 (end of a fourth session that day). **Registration Report,
+Last updated: 2026-09-15 (end of session). **The site login now accepts a second,
+independent password** (`$PASSWORD_HASH_2` in `secrets.php`, set to a hash of
+`Gladiator#1`) alongside the original — either logs in. Fixing this properly required
+patching a real bug found along the way: both password-reset flows rewrite `secrets.php`
+wholesale and neither preserved the new field, so the very first live "Forgot password?"
+use after this shipped would have silently deleted it. **That reset flow was then actually
+used live**, on the primary password, within the same session — confirming the fix
+works: `$PASSWORD_HASH_2` survived intact, unknown to this session is the new primary
+password now on the server. Two checkpoints shipped, v2.53 (`2277c02`) then v2.54
+(`5d820ae`, bump-only). See "This session's work (2026-09-15 — second site password)".
+
+Previous update: 2026-09-14 (end of a fourth session that day). **Registration Report,
 Car Show Report and T-Shirt Report now open a print preview + column/sort builder screen**
 (ported from the sibling CarShow app), replacing print-immediately buttons. The T-Shirt
 Report also normalizes multi-shirt registrations into one row per shirt so it can sort by
@@ -143,11 +154,11 @@ automated coverage — all of it was verified by hand against the live 2026 even
 (see the session entries below). The count stays at 85 because none of that work touched
 `logic.js`.
 
-**Version:** `App/version.json` — stamped **2.52** in the currently-live
-`App/ETCCVetteFest.html` / `app-bundle.html` on the server (built and deployed 2026-09-14
-20:05, checkpoint commit `873c117`). The file itself now reads `{major:2, minor:53}`,
+**Version:** `App/version.json` — stamped **2.54** in the currently-live
+`App/ETCCVetteFest.html` / `app-bundle.html` on the server (built and deployed 2026-09-15
+05:20, checkpoint commit `5d820ae`). The file itself now reads `{major:2, minor:55}`,
 since `build.js` bumps-and-stores the *next* version on every run — the next build will
-stamp "2.53". **Gaps in the version sequence are normal, not lost work:** `build.js` bumps
+stamp "2.55". **Gaps in the version sequence are normal, not lost work:** `build.js` bumps
 on *every* run, including rebuilds that were never committed or deployed, which is why the
 shipped history reads 2.11, 2.12, 2.13, 2.15, 2.17, 2.18, 2.20, 2.22, 2.23, 2.27, 2.34,
 2.37, 2.38, 2.40, 2.41.
@@ -227,6 +238,42 @@ copy.
 **Git: pushed and working**, as of 2026-08-27 — see that session's entry below for the
 one gotcha (a global credential helper that must be worked around on every push from this
 machine).
+
+## This session's work (2026-09-15 — second site password)
+
+**User asked**: "add a second password to the website login Gladiator#1."
+
+- New `vettefest_password_hashes()` in `lib.php` returns `[$PASSWORD_HASH,
+  $PASSWORD_HASH_2]` (the second filtered out if empty/unset) as globals, so it needs no
+  new parameter threaded through the ~15 existing call sites that already pass
+  `$PASSWORD_HASH` to `vettefest_authed()`. That function and `index.php`'s own `action=
+  login` check both now loop over the list instead of comparing one hash. An unset
+  `$PASSWORD_HASH_2` behaves exactly as before — this is additive, not a rework.
+- `secrets.php` (gitignored) got `$PASSWORD_HASH_2` = `openssl passwd -6` of
+  `Gladiator#1`. `secrets.example.php` documents the new optional line, commented out by
+  default.
+- **Real bug found and fixed while doing this, not hypothetical**: `reset-password.php`
+  and `dev-reset-password.php` each rewrite `secrets.php` from scratch on a password
+  reset, preserving only the fields they explicitly `require`-and-re-emit. Neither knew
+  about `$PASSWORD_HASH_2` yet, so the next use of either "Forgot password?" flow would
+  have silently deleted it — the exact same class of bug this file's comments already
+  document being fixed once before, for `$DEV_PASSWORD_HASH` and the SMTP vars. Both
+  files now preserve `$PASSWORD_HASH_2` the same way.
+- **Verified live, twice.** First right after deploying: `curl`'d `action=login` with
+  both passwords (`{"success":true}` each) and a wrong one (`401`), and confirmed the
+  Developer login — a separate, already-equal-to-the-site-password credential from an
+  earlier session — still worked. **Second, unplanned**: partway through the following
+  checkpoint, `secrets.php`'s live timestamp/size had changed without this session
+  touching it — someone had actually used the "Forgot password?" reset flow on the
+  **primary** password in the few minutes between. Re-downloaded the live file to check
+  rather than assuming a bug: the new primary hash is unknown to this session (as
+  intended — the flow doesn't reveal it), and `$PASSWORD_HASH_2` was preserved exactly as
+  written, byte for byte. This is the preservation fix proving itself under a real, not
+  simulated, reset — and a reminder for future sessions: **never blindly re-upload a
+  locally-held `secrets.php`** once a live reset may have happened, or it would revert
+  that change. This session's local copy was correctly left un-reuploaded.
+- No `App/src/*` changes — this was entirely `App/deploy/*.php`, so no rebuild was needed
+  for the fix itself; the two checkpoints that followed were routine.
 
 ## This session's work (2026-09-14 — report builders)
 
@@ -1354,7 +1401,16 @@ having the token; see that section and "Known follow-ups" for the exact command.
 
 ## Known follow-ups / next steps
 
-1. **Git push needs a manual credential-helper override every time, on this machine.**
+1. **The site's PRIMARY password is now unknown to any Claude session.** It was changed
+   live via "Forgot password?" on 2026-09-15, mid-session, by someone else (see that
+   session's entry above) — this file never records plaintext passwords, and the reset
+   flow doesn't reveal the new one to whoever triggers it either. The **second** password
+   (`Gladiator#1`, `$PASSWORD_HASH_2` in `secrets.php`) still logs in and is known. If the
+   primary is needed and lost, use "Forgot password?" again (goes to the admin inbox) or
+   the Developer-password reset flow for that separate credential. **Do not re-upload any
+   locally-held copy of `secrets.php` believing it's stale** — the live one is now correct
+   and a local copy is not.
+2. **Git push needs a manual credential-helper override every time, on this machine.**
    `git push origin main` alone will 403 as **BWERepo** because a global
    `credential.helper = manager` (system + global config, not this repo) wins over the
    repo-local `store` helper otherwise. Always push with:
@@ -1365,28 +1421,28 @@ having the token; see that section and "Known follow-ups" for the exact command.
    cannot be committed). This is a standing operational quirk of this machine, not
    something to "fix" by editing global git config (that's out of scope and could break
    other repos that rely on `manager` legitimately).
-2. Nothing in the application code itself is known-broken as of this writing — a scan for
+3. Nothing in the application code itself is known-broken as of this writing — a scan for
    TODO/FIXME/placeholder markers across `App/src` and `App/deploy` has twice turned up
    nothing beyond literal HTML `placeholder=` attributes, and a full-tree grep for "Car
    Show" (2026-08-28, after fixing the four leftover-branding pages above) confirmed every
    remaining occurrence is a legitimate reference to the Car Show feature/tab within Vette
    Fest itself, or to the sibling app by name — not stray copy-paste. Note that a lot of
    code has landed since that scan (v2.11→v2.23) without it being re-run.
-3. Only the 2026 event has been exercised on the live site (74 registration rows / 108
+4. Only the 2026 event has been exercised on the live site (74 registration rows / 108
    activity rows of real ClubExpress data as of 2026-09-12). No second event/year has been
    created yet, so per-year data isolation (`vettefest_valid_year()` etc.) is unverified
    against more than one year's worth of real data — this mirrors a similar open item the
    CarShow app had after ITS multi-year work landed.
-4. **Import Flyer has no "remove flyer" UI** — you can only overwrite it by uploading a
+5. **Import Flyer has no "remove flyer" UI** — you can only overwrite it by uploading a
    different file. If an officer needs the flyer gone entirely, delete
    `data/<year>/flyer.json` over FTP (or add a `?delete` branch to `flyer.php` + a Remove
    button on the Setup tab if it's asked for).
-5. **A new `deploy/*.php` file will not ship unless it's added to the explicit upload
+6. **A new `deploy/*.php` file will not ship unless it's added to the explicit upload
    list in `deploy/ftp-deploy.sh`** — that script uploads a hand-maintained list, not a
    glob. (Bit the flyer.php work on 2026-09-10 before it was noticed. The four endpoints
    added since are all on the list — verified 2026-09-12.) Same applies to
    `vettefest_show_files()` in `lib.php` for any new per-event JSON file.
-6. **The import automation is now in this repo, but its machine setup is not.** Code:
+7. **The import automation is now in this repo, but its machine setup is not.** Code:
    `deploy/sync-registrations.js`, `clubexpress.js`, `clubexpress-login.js`,
    `install-scheduled-task.ps1` (README "Automated imports"). Per-machine, outside git: the
    Windows task `vettefest-sync-registrations` (**Interactive, as `NBKFF3A-BEELINK\Admin`
@@ -1409,7 +1465,7 @@ having the token; see that section and "Known follow-ups" for the exact command.
    2026-09-12 — the `openModalPopup('/popup.aspx…')` onclick, `<label for>` radio text, and
    `ctl00$save_button` as the postback target. A ClubExpress redesign that changes those
    fails loudly (FAILED History row, non-zero exit), not silently.
-7. **Auto-import on the 2026 event: confirmed fine by the user on 2026-09-13, nothing
+8. **Auto-import on the 2026 event: confirmed fine by the user on 2026-09-13, nothing
    further to track.** As last read from the live server: `autoImportEnabled: true`,
    `autoImportIntervalHours: 1`, `autoImportTimes: []`, `autoImportStartDate: 2026-09-12`,
    `autoImportEndDate: 2026-09-27`. This lives only in `data/2026/app-settings.json` on the
@@ -1418,19 +1474,19 @@ having the token; see that section and "Known follow-ups" for the exact command.
    nobody would recognize as deliberate. (Comparison is inclusive, `$today <= $endDate`
    Eastern; "Import Now" bypasses both the window and the enabled flag; Event URL is the
    `www.` host.)
-8. **No UI has automated coverage.** The regression suite is logic-only, so the Setup tab,
+9. **No UI has automated coverage.** The regression suite is logic-only, so the Setup tab,
    Import Schedule, History tab, flyer feature, and the whole scheduled-task handshake were
    all verified by hand against the live 2026 event and nothing guards them against
    regression. Any change in that area needs manual re-verification on the live site.
-9. **Legacy history rows use a different key.** Import-history entries written before v2.13
+10. **Legacy history rows use a different key.** Import-history entries written before v2.13
    used `importedAt`; the view and the delete endpoint read either key on purpose. Don't
    collapse that dual read — pre-v2.13 rows are still on the live server.
-10. **Run `/ETCCVetteFestEnd` before closing a session.** The 09-11 and 09-12 sessions did
+11. **Run `/ETCCVetteFestEnd` before closing a session.** The 09-11 and 09-12 sessions did
     not, which left this file stranded at v2.8 while the app shipped through v2.23; those
     two entries had to be reconstructed from commit messages, and whatever wasn't committed
     is gone. The commit messages in this repo are detailed enough to make that recovery
     possible — keep writing them that way.
-11. **The Backups panel was confirmed visually in the browser on 2026-09-13.** The
+12. **The Backups panel was confirmed visually in the browser on 2026-09-13.** The
     auto-backup schedule left enabled by that session's API testing
     (`2026-09-13`→`2026-10-13`) was raised with the user as an open decision the same
     day; they chose to manage that schedule themselves directly in the Setup tab rather
@@ -1438,11 +1494,11 @@ having the token; see that section and "Known follow-ups" for the exact command.
     schedule as an open item unless a future session finds it in a state nobody
     deliberately set (e.g. re-enabled after being turned off with no corresponding user
     action).
-12. **Setup tab autosave (v2.40) was confirmed live by the user on 2026-09-13** —
+13. **Setup tab autosave (v2.40) was confirmed live by the user on 2026-09-13** —
     toggling a checkbox, adding/removing a time, and changing a date all show "Saving…"
     → "Saved." with no button, in a real logged-in browser session. Nothing further to
     track from this.
-13. **Deleting an event through the normal UI (shows.php) leaves that year's
+14. **Deleting an event through the normal UI (shows.php) leaves that year's
     `data/<year>/logs/` folder behind, orphaned.** `vettefest_show_files()` — the list
     that action deletes — is still a flat list of files, from before the sync task's own
     per-run logs (a subdirectory) existed. Found while building the v2.44 restore feature
@@ -1451,7 +1507,7 @@ having the token; see that section and "Known follow-ups" for the exact command.
     path wasn't in scope for that change. Low-stakes (a few small `.log` files sitting
     unused on disk, not a data-integrity issue) but worth fixing in `shows.php`'s
     `delete` action next time someone's in there.
-14. **Restore is fully confirmed working, end to end.** The user's 2026-09-14 report
+15. **Restore is fully confirmed working, end to end.** The user's 2026-09-14 report
     ("11:43 backup does not restore for the 2027 Vette Fest") came from actually using
     the Restore modal, surfacing the real bug fixed the same day: a just-created event
     with no data yet neither appeared in the scope dropdown nor could be restored if
