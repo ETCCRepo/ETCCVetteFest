@@ -6,15 +6,34 @@
 // JSON read/write, safe-inline-script embedding, SMTP sending, and the
 // per-event data paths that would otherwise be copy-pasted across all of them.
 
+// The site login accepts more than one password — $PASSWORD_HASH plus an
+// optional second one, $PASSWORD_HASH_2 (both in secrets.php; the second is
+// unset/empty by default, so a site with only one configured behaves exactly
+// as before). Read as globals rather than threaded through every call site,
+// since secrets.php is already require()'d before any of them run.
+function vettefest_password_hashes() {
+    global $PASSWORD_HASH, $PASSWORD_HASH_2;
+    $hashes = [$PASSWORD_HASH];
+    if (!empty($PASSWORD_HASH_2)) $hashes[] = $PASSWORD_HASH_2;
+    return $hashes;
+}
+
 // True if either the current PHP session is already authenticated (the
 // normal case for same-origin calls made from the hosted page itself, e.g.
 // a detail-modal edit saved while logged in) or the request supplied a
-// password matching secrets.php's hash (the normal case for calls with no
-// shared session, e.g. upload-registrations.js's automated CSV push).
+// password matching one of secrets.php's site-password hashes (the normal
+// case for calls with no shared session, e.g. upload-registrations.js's
+// automated CSV push). $passwordHash is kept as the first parameter for
+// every existing call site (they all pass $PASSWORD_HASH) but is no longer
+// the only hash checked — vettefest_password_hashes() adds the second one.
 function vettefest_authed($passwordHash, $providedPassword) {
     if (!empty($_SESSION['vettefest_authenticated'])) return true;
     $pw = (string)$providedPassword;
-    return $pw !== '' && hash_equals($passwordHash, crypt($pw, $passwordHash));
+    if ($pw === '') return false;
+    foreach (vettefest_password_hashes() as $hash) {
+        if ($hash && hash_equals($hash, crypt($pw, $hash))) return true;
+    }
+    return false;
 }
 
 function vettefest_read_json_list($file) {

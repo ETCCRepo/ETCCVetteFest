@@ -28,6 +28,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $valid) {
         $errors[] = 'Passwords do not match.';
     } else {
         $PASSWORD_HASH = null;
+        $PASSWORD_HASH_2 = null;
         $SMTP_HOST = $SMTP_PORT = $SMTP_USER = $SMTP_PASS = $SMTP_FROM = null;
         if (is_file($SECRETS_FILE)) require $SECRETS_FILE;
 
@@ -36,6 +37,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $valid) {
         if ($PASSWORD_HASH !== null) {
             $lines[] = '// Not committed to git (see .gitignore) — the live site\'s actual password hash.';
             $lines[] = '$PASSWORD_HASH = ' . var_export($PASSWORD_HASH, true) . ';';
+        }
+        if ($PASSWORD_HASH_2 !== null) {
+            $lines[] = '// A second, independently valid site password (see vettefest_password_hashes() in lib.php).';
+            $lines[] = '$PASSWORD_HASH_2 = ' . var_export($PASSWORD_HASH_2, true) . ';';
         }
         $lines[] = '';
         $lines[] = '// Separate Developer password (hamburger > \xf0\x9f\x9b\xa0 Developer).';

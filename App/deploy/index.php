@@ -19,7 +19,12 @@ require __DIR__ . '/lib.php';
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'login') {
     header('Content-Type: application/json');
     $pw = (string)($_POST['password'] ?? '');
-    $ok = hash_equals($PASSWORD_HASH, crypt($pw, $PASSWORD_HASH));
+    // Accepts either of the site's passwords — see vettefest_password_hashes()
+    // in lib.php ($PASSWORD_HASH plus the optional $PASSWORD_HASH_2).
+    $ok = false;
+    foreach (vettefest_password_hashes() as $hash) {
+        if ($hash && hash_equals($hash, crypt($pw, $hash))) { $ok = true; break; }
+    }
     if ($ok) {
         session_regenerate_id(true);
         $_SESSION['vettefest_authenticated'] = true;

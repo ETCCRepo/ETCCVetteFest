@@ -4,6 +4,12 @@
 //   openssl passwd -6 -salt "$(openssl rand -hex 8)" 'the-actual-password'
 $PASSWORD_HASH = '$6$replace-with-real-salt$replaceWithRealHashXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX.';
 
+// Optional SECOND site password — either this or $PASSWORD_HASH above logs in
+// (see vettefest_password_hashes() in lib.php). Leave this line commented out
+// / $PASSWORD_HASH_2 unset to accept only $PASSWORD_HASH, as before this
+// existed.
+// $PASSWORD_HASH_2 = '$6$replace-with-real-salt$replaceWithRealHashXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX.';
+
 // Separate "Developer" password (app.js's Developer Login screen, hamburger
 // menu > 🛠 Developer) — a distinct credential from $PASSWORD_HASH above.
 // Same generation command, different password. If left empty/unset, the
