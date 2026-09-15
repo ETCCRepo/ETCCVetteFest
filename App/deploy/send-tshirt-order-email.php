@@ -1,6 +1,6 @@
 <?php
 // Officer-only endpoint to send the T-Shirt Order Email
-// (T-Shirts tab > T-Shirt Order Form). Same session/password dual auth as
+// (T-Shirts tab > T-Shirt Order Email). Same session/password dual auth as
 // every other endpoint here (lib.php's vettefest_authed()) — since the caller
 // is already an authenticated officer, a client-supplied "to" is trusted.
 // Falls back to the Vendor Email configured in Developer > Settings >

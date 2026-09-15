@@ -154,7 +154,7 @@ function vettefest_safe_inline_json($value) {
 // Splits a comma/semicolon-separated string into validated email addresses,
 // silently dropping anything that fails FILTER_VALIDATE_EMAIL. Used for
 // settings-driven To/CC/BCC fields that may hold multiple addresses (e.g.
-// a To/CC/BCC field on the T-Shirt Order Form).
+// a To/CC/BCC field on the T-Shirt Order Email).
 function vettefest_parse_addr_list($raw) {
     if (!is_string($raw) || trim($raw) === '') return [];
     $out = [];

@@ -557,7 +557,7 @@ table.report-preview-table th, table.report-preview-table td { font-size: 10px; 
   <div id="app"></div>
 </div>
 <footer class="app-footer">
-  <div class="footer-line"><span>v2.55 &middot; Deployed 09/15/2026 07:33 PM</span> &middot; <span>Website by Business Web Express &middot; <a href="https://businesswebexpress.com" target="_blank" rel="noopener">businesswebexpress.com</a></span> &middot; <span>&copy; 2026 East Tennessee Corvette Club &middot; Knoxville, TN &middot; <a href="mailto:etccwebsite.webmanager@gmail.com">etccwebsite.webmanager@gmail.com</a></span></div>
+  <div class="footer-line"><span>v2.56 &middot; Deployed 09/15/2026 07:39 PM</span> &middot; <span>Website by Business Web Express &middot; <a href="https://businesswebexpress.com" target="_blank" rel="noopener">businesswebexpress.com</a></span> &middot; <span>&copy; 2026 East Tennessee Corvette Club &middot; Knoxville, TN &middot; <a href="mailto:etccwebsite.webmanager@gmail.com">etccwebsite.webmanager@gmail.com</a></span></div>
 </footer>
 <script>
 /* @license
@@ -666,14 +666,20 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     { key: "Xtra", label: "Purchased", csvLabel: "Xtra" }
   ];
 
-  // Build the 12 shirt buckets: { key, col, groupKey, sizeKey }.
-  // key e.g. "FreeLG"  |  col (registration column header) e.g. "Free LG"
+  // Build the 12 shirt buckets: { key, col, dispCol, groupKey, sizeKey }.
+  // key e.g. "FreeLG"  |  col (registration column header, csvLabel-based)
+  // e.g. "Xtra LG"  |  dispCol (what the Registration tab's Shirts cell
+  // actually shows, label-based) e.g. "Purchased LG" — same reason col vs.
+  // csvLabel are split above: this text is shown to officers, so it should
+  // say "Purchased", but it must never be used to look a value up in row[],
+  // which only ever has a "Xtra LG"-named column.
   var SHIRT_BUCKETS = [];
   GROUPS.forEach(function (g) {
     SIZES.forEach(function (s) {
       SHIRT_BUCKETS.push({
         key: g.key + s.key,
         col: g.csvLabel + " " + s.key,
+        dispCol: g.label + " " + s.key,
         groupKey: g.key,
         sizeKey: s.key
       });
@@ -1288,6 +1294,18 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     return (d.getMonth() + 1) + "/" + d.getDate() + "/" + d.getFullYear() + " " + h + ":" + p(d.getMinutes()) + " " + ap;
   }
   function isShirt(res, c) { return res.shirtColumns.indexOf(c) !== -1; }
+  // c is the real registration-record property name (e.g. "Xtra LG" — must
+  // stay that, it's the CSV column header ClubExpress exports and every
+  // rec[c] lookup depends on it). This is ONLY for what the header cell
+  // shows an officer opening the file — CONFIG.SHIRT_BUCKETS' dispCol is the
+  // same string with the display label (e.g. "Purchased LG") substituted in.
+  function colHeaderText(c) {
+    if (!CONFIG || !CONFIG.SHIRT_BUCKETS) return c;
+    for (var i = 0; i < CONFIG.SHIRT_BUCKETS.length; i++) {
+      if (CONFIG.SHIRT_BUCKETS[i].col === c) return CONFIG.SHIRT_BUCKETS[i].dispCol;
+    }
+    return c;
+  }
 
   function build(ExcelJS, res) {
     var wb = new ExcelJS.Workbook();
@@ -1311,7 +1329,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     ws.getRow(1).height = 24;
     cols.forEach(function (c, i) {
       var cell = ws.getCell(2, i + 1);
-      cell.value = c; cell.font = { bold: true }; cell.fill = GREY; cell.border = border();
+      cell.value = colHeaderText(c); cell.font = { bold: true }; cell.fill = GREY; cell.border = border();
       cell.alignment = { horizontal: isShirt(res, c) ? "center" : "left" };
     });
     ws.getRow(2).height = 22;
@@ -1951,8 +1969,11 @@ window.__vettefestReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQ
   function shirtSummaryParts(row) {
     var parts = [];
     CONFIG.SHIRT_BUCKETS.forEach(function (b) {
+      // b.col is the real CSV column name (e.g. "Xtra LG") — must stay that
+      // for the row[...] lookup. b.dispCol is the same thing with the
+      // display label (e.g. "Purchased LG") for what's actually shown.
       var qty = Number(row[b.col]) || 0;
-      if (qty > 0) parts.push({ label: b.col, qty: qty });
+      if (qty > 0) parts.push({ label: b.dispCol, qty: qty });
     });
     return parts;
   }

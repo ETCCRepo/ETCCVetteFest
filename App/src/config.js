@@ -48,14 +48,20 @@
     { key: "Xtra", label: "Purchased", csvLabel: "Xtra" }
   ];
 
-  // Build the 12 shirt buckets: { key, col, groupKey, sizeKey }.
-  // key e.g. "FreeLG"  |  col (registration column header) e.g. "Free LG"
+  // Build the 12 shirt buckets: { key, col, dispCol, groupKey, sizeKey }.
+  // key e.g. "FreeLG"  |  col (registration column header, csvLabel-based)
+  // e.g. "Xtra LG"  |  dispCol (what the Registration tab's Shirts cell
+  // actually shows, label-based) e.g. "Purchased LG" — same reason col vs.
+  // csvLabel are split above: this text is shown to officers, so it should
+  // say "Purchased", but it must never be used to look a value up in row[],
+  // which only ever has a "Xtra LG"-named column.
   var SHIRT_BUCKETS = [];
   GROUPS.forEach(function (g) {
     SIZES.forEach(function (s) {
       SHIRT_BUCKETS.push({
         key: g.key + s.key,
         col: g.csvLabel + " " + s.key,
+        dispCol: g.label + " " + s.key,
         groupKey: g.key,
         sizeKey: s.key
       });

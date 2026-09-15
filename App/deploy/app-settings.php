@@ -1,6 +1,6 @@
 <?php
 // Small key/value settings store for one event's app-settings.json:
-//  - tshirtVendorEmail: the address the T-Shirts tab's T-Shirt Order Form
+//  - tshirtVendorEmail: the address the T-Shirts tab's T-Shirt Order Email
 //    defaults its "To" field to (Developer > Settings > T-Shirt Vendor).
 //    Nothing is ever sent automatically — an officer still reviews and
 //    presses Send on that screen, and can override the recipient there.

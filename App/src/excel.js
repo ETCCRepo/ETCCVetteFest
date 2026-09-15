@@ -25,6 +25,18 @@
     return (d.getMonth() + 1) + "/" + d.getDate() + "/" + d.getFullYear() + " " + h + ":" + p(d.getMinutes()) + " " + ap;
   }
   function isShirt(res, c) { return res.shirtColumns.indexOf(c) !== -1; }
+  // c is the real registration-record property name (e.g. "Xtra LG" — must
+  // stay that, it's the CSV column header ClubExpress exports and every
+  // rec[c] lookup depends on it). This is ONLY for what the header cell
+  // shows an officer opening the file — CONFIG.SHIRT_BUCKETS' dispCol is the
+  // same string with the display label (e.g. "Purchased LG") substituted in.
+  function colHeaderText(c) {
+    if (!CONFIG || !CONFIG.SHIRT_BUCKETS) return c;
+    for (var i = 0; i < CONFIG.SHIRT_BUCKETS.length; i++) {
+      if (CONFIG.SHIRT_BUCKETS[i].col === c) return CONFIG.SHIRT_BUCKETS[i].dispCol;
+    }
+    return c;
+  }
 
   function build(ExcelJS, res) {
     var wb = new ExcelJS.Workbook();
@@ -48,7 +60,7 @@
     ws.getRow(1).height = 24;
     cols.forEach(function (c, i) {
       var cell = ws.getCell(2, i + 1);
-      cell.value = c; cell.font = { bold: true }; cell.fill = GREY; cell.border = border();
+      cell.value = colHeaderText(c); cell.font = { bold: true }; cell.fill = GREY; cell.border = border();
       cell.alignment = { horizontal: isShirt(res, c) ? "center" : "left" };
     });
     ws.getRow(2).height = 22;

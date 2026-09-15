@@ -235,8 +235,11 @@
   function shirtSummaryParts(row) {
     var parts = [];
     CONFIG.SHIRT_BUCKETS.forEach(function (b) {
+      // b.col is the real CSV column name (e.g. "Xtra LG") — must stay that
+      // for the row[...] lookup. b.dispCol is the same thing with the
+      // display label (e.g. "Purchased LG") for what's actually shown.
       var qty = Number(row[b.col]) || 0;
-      if (qty > 0) parts.push({ label: b.col, qty: qty });
+      if (qty > 0) parts.push({ label: b.dispCol, qty: qty });
     });
     return parts;
   }
