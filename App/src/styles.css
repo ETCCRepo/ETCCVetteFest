@@ -266,7 +266,7 @@ th.pinned { z-index: 3; }
 .dev-login-error { color: #c62828; font-size: 12px; margin: 8px 0 0; text-align: center; }
 .dev-login-hint { color: #6e6e73; font-size: 12px; text-align: center; margin-top: 18px; }
 
-/* form rows (Settings, T-Shirt Order Form) */
+/* form rows (Settings, T-Shirt Order Email) */
 .form-row { display: flex; align-items: center; gap: 10px; margin: 9px 0; }
 .form-row .form-label { min-width: 140px; font-size: 13px; font-weight: 600; color: var(--ink); }
 .form-row input[type=text], .form-row select {
