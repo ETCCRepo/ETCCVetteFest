@@ -1,6 +1,15 @@
 # ETCC Vette Fest App — Project Status
 
-Last updated: 2026-09-15 (end of session). **The site login now accepts a second,
+Last updated: 2026-09-15 (end of a later session that day). **"Xtra" renamed to
+"Purchased" everywhere an officer sees it** (Shirts summary table, order email, Excel
+exports, the Registration tab's own Shirts cell — the last two only surfaced after a
+follow-up screenshot caught what the first pass missed), **"T-Shirt Order Form" renamed
+to "T-Shirt Order Email"**, and an **"⬇ Export" button added to all three report screens**
+(Registration/Car Show/T-Shirt Report), downloading just that report's own column
+selection and sort order rather than the full workbook. Checkpoint v2.59 (`e18d7a9`). See
+"This session's work (2026-09-15 — Xtra rename + report Export buttons)".
+
+Previous update: 2026-09-15 (end of session). **The site login now accepts a second,
 independent password** (`$PASSWORD_HASH_2` in `secrets.php`, set to a hash of
 `Gladiator#1`) alongside the original — either logs in. Fixing this properly required
 patching a real bug found along the way: both password-reset flows rewrite `secrets.php`
@@ -154,11 +163,11 @@ automated coverage — all of it was verified by hand against the live 2026 even
 (see the session entries below). The count stays at 85 because none of that work touched
 `logic.js`.
 
-**Version:** `App/version.json` — stamped **2.54** in the currently-live
+**Version:** `App/version.json` — stamped **2.59** in the currently-live
 `App/ETCCVetteFest.html` / `app-bundle.html` on the server (built and deployed 2026-09-15
-05:20, checkpoint commit `5d820ae`). The file itself now reads `{major:2, minor:55}`,
+23:55, checkpoint commit `e18d7a9`). The file itself now reads `{major:2, minor:60}`,
 since `build.js` bumps-and-stores the *next* version on every run — the next build will
-stamp "2.55". **Gaps in the version sequence are normal, not lost work:** `build.js` bumps
+stamp "2.60". **Gaps in the version sequence are normal, not lost work:** `build.js` bumps
 on *every* run, including rebuilds that were never committed or deployed, which is why the
 shipped history reads 2.11, 2.12, 2.13, 2.15, 2.17, 2.18, 2.20, 2.22, 2.23, 2.27, 2.34,
 2.37, 2.38, 2.40, 2.41.
@@ -238,6 +247,84 @@ copy.
 **Git: pushed and working**, as of 2026-08-27 — see that session's entry below for the
 one gotcha (a global credential helper that must be worked around on every push from this
 machine).
+
+## This session's work (2026-09-15 — Xtra rename + report Export buttons)
+
+Three user-requested changes, all display/UI-only — no data model changes. Checkpoint
+**v2.59** (`e18d7a9`).
+
+### 1. "Xtra" renamed to "Purchased" everywhere it's shown to an officer (`a4683ce`, `83f4af3`, `33d95e9`)
+
+The user pointed at this twice, from two different screenshots, and both were real gaps
+in the first pass — not scope creep:
+
+- **First pass (`a4683ce`)**: `config.js`'s `GROUPS` array gained a `label`/`csvLabel`
+  split — `label: "Purchased"` (was `"Xtra"`) is what's actually shown (the Shirts summary
+  table header, the T-shirt order email body, the Excel export's SummarySheet), while
+  `csvLabel: "Xtra"` is what `SHIRT_BUCKETS`' `col` field is built from — **`col` must
+  never change**, since it's matched against the real ClubExpress export's own column
+  headers ("Xtra LG", etc.), which always use that literal word. Also renamed the
+  T-Shirt Report's own "Shirts" column (Reports tab) to show just the size ("SM") instead
+  of "Free SM"/"Xtra SM" — Free vs. Purchased already has its own separate `shirtType`
+  column there.
+- **Second pass (`83f4af3`)**, prompted by a follow-up screenshot: the Registration tab's
+  own multi-shirt cell (`shirtSummaryParts()` in app.js, e.g. "Free XLG, Xtra LG") and the
+  Excel export's `RegistrationSheet` column headers were **still** showing "Xtra" — both
+  read `b.col` directly for display, the same field that must stay CSV-accurate. Fixed by
+  adding a genuinely separate `dispCol` field to each `SHIRT_BUCKETS` entry
+  (`label`-based, e.g. "Purchased LG") alongside the existing `col` (`csvLabel`-based,
+  e.g. "Xtra LG") — `row[b.col]` for the data lookup is untouched in both call sites;
+  only what's displayed changed. `excel.js` gained `colHeaderText(c)` to look up a
+  bucket's `dispCol` from its real column name for the same reason.
+- **Third pass (`33d95e9`)**: one harmless leftover, a `styles.css` comment, fixed for
+  consistency after confirming via the built bundle it was the only occurrence left
+  anywhere (`grep -c "Xtra"` inside `ETCCVetteFest.html` dropped to the expected count).
+
+**The pattern to remember if "Xtra" ever needs touching again:** there are now three
+independent fields on each `SHIRT_BUCKETS` entry — `key` (internal, e.g. `"XtraLG"`,
+untouched, don't ever rename), `col` (CSV column match, must always say "Xtra"), `dispCol`
+(display, says "Purchased"). A future rename should only ever touch `label`/`dispCol`,
+never `key`/`csvLabel`/`col`.
+
+**Verified**: 85/85 regression tests pass (including the Excel round-trip, which checks
+header text through the new `colHeaderText()`), `node build.js` succeeds, page loads with
+zero console errors, and `grep` against the built bundle confirmed zero remaining
+"T-Shirt Order Form" or stray "Xtra" display occurrences before each commit.
+
+### 2. "T-Shirt Order Form" renamed to "T-Shirt Order Email" (`a4683ce`, `83f4af3`, `33d95e9`)
+
+Straightforward text rename — the button, the full-page screen's title, the Settings
+hint text, and every PHP-side code comment referencing it (`app-settings.php`, `lib.php`,
+`send-tshirt-order-email.php`). It emails an order to the T-shirt vendor; it was never a
+fillable form, so the old name never fit.
+
+### 3. Export button added to all three report screens (`641ea90`)
+
+Registration Report, Car Show Report, and T-Shirt Report share one page-banner builder
+(`buildPageBanner()`) and one generic report-page function (`buildGenReportPage()`), so
+this was genuinely one change, not three. `buildPageBanner()` gained a 4th optional
+param, `exportCallback`, rendering a **"⬇ Export"** button to the **left** of
+**"🖨 Print"** when given — the other 4 `buildPageBanner()` call sites (T-Shirt Order
+Email, Settings, Regression Tests, Change Log) don't pass one, so only the three reports
+got the new button.
+
+New `exportGenReport(spec)` downloads exactly what's currently on screen — the report's
+own column selection, sort order, and row set (whatever the officer customized in that
+report's own builder) — as a small single-sheet `.xlsx`, via a new
+`VetteFestExcel.buildSimple(ExcelJS, title, cols, rows, cellText)` in `excel.js`.
+**Deliberately not** the Summary tab's existing "⬇ Excel" button, which always exports
+the full four-sheet `RegistrationSheet`/`SummarySheet`/`CarShow`/`MessageSheet` workbook
+regardless of what report (if any) is open — `buildSimple()` instead reads
+`genReportColumns(spec)` / `genReportSorted(spec)` / `spec.cellText`, so the export always
+matches what's actually in front of the officer, not the whole dataset.
+
+**Verified**: `node build.js` succeeds, 85/85 regression tests still pass (this touches no
+`logic.js` code, so unaffected), page loads with zero console errors. **Not verified**: an
+actual click-through — opening one of the three reports, clicking Export, confirming the
+file downloads with the right content. That needs a live authenticated session with an
+event open, which this session could not do itself (no local backend to open an event
+against, and driving the app's own login is outside what this session does) — the user
+was asked to confirm live and had not answered before this session ended.
 
 ## This session's work (2026-09-15 — second site password)
 
@@ -1514,6 +1601,13 @@ having the token; see that section and "Known follow-ups" for the exact command.
     asked for directly. Fixed, re-verified via direct API calls, and then the user
     clicked through the (fixed) Restore modal in the browser themselves and confirmed it
     works. Nothing further to track from this.
+16. **The three report screens' new "⬇ Export" button (v2.59, `641ea90`) has not been
+    click-tested in a live browser session** — only by `node build.js` succeeding, the
+    regression suite staying green, and a zero-console-error load. Opening a report,
+    clicking Export, and confirming a correctly-populated `.xlsx` actually downloads
+    needs a live authenticated session with an event open, same limitation every other
+    UI-only change this project has hit. Ask the user rather than assume either way if
+    it matters.
 
 ## Architecture notes worth preserving
 
