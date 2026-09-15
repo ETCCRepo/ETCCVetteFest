@@ -147,7 +147,7 @@
     appSettingsError: null,
     appSettingsSaved: false,
 
-    tshirtOrderPageOpen: false, // T-Shirts tab > "T-Shirt Order Form" full-page screen
+    tshirtOrderPageOpen: false, // T-Shirts tab > "T-Shirt Order Email" full-page screen
     emailTo: "",
     emailSubject: "",
     emailBody: "",
@@ -1535,7 +1535,7 @@
         ["No registration data loaded yet — import a CSV pair to see shirt counts."]));
     }
 
-    var orderBtn = el("button", { class: "btn primary" }, ["📧 T-Shirt Order Form"]);
+    var orderBtn = el("button", { class: "btn primary" }, ["📧 T-Shirt Order Email"]);
     orderBtn.addEventListener("click", openTshirtOrderPage);
     wrap.appendChild(el("div", { class: "panel" }, [
       el("div", { class: "settings-actions" }, [orderBtn])
@@ -1575,7 +1575,7 @@
     ]);
   }
 
-  // ---------- T-Shirt Order Form (full-page screen) ----------
+  // ---------- T-Shirt Order Email (full-page screen) ----------
   function openTshirtOrderPage() {
     if (!state.emailTo) state.emailTo = state.appSettings.tshirtVendorEmail || "";
     if (!state.emailSubject) state.emailSubject = state.appSettings.tshirtOrderSubject || "ETCC Vette Fest — T-Shirt Order";
@@ -1591,7 +1591,7 @@
     host.innerHTML = "";
     if (!state.tshirtOrderPageOpen) return;
 
-    var head = buildPageBanner(closeTshirtOrderPage, "T-Shirt Order Form");
+    var head = buildPageBanner(closeTshirtOrderPage, "T-Shirt Order Email");
     var body = el("div", { class: "api-page-inner" });
 
     var toInput = el("input", { type: "text", value: state.emailTo || "", placeholder: "email@example.com" });
@@ -2881,7 +2881,11 @@
     // report's row is a whole registration, whose Shirts cell summarizes all.
     if (r.__shirtBucket) {
       var b = r.__shirtBucket;
-      if (key === "shirts") return b.col;
+      // The T-Shirt Report's Shirts column shows just the size (e.g. "SM"),
+      // not "Free SM"/"Xtra SM" — Free vs. Purchased is its own separate
+      // "shirtType" column (below) for whoever wants it in the report
+      // instead. Changed 2026-09-15, at the user's request.
+      if (key === "shirts") return b.sizeKey;
       if (key === "shirtSize") return shirtSizeLabel(b.sizeKey);
       if (key === "shirtType") return b.groupKey;
     }
@@ -3621,7 +3625,7 @@
 
     body.appendChild(el("h4", { text: "T-Shirt Vendor" }));
     body.appendChild(el("div", { class: "hint", style: "margin-bottom:4px" },
-      ["Where the T-Shirts tab's “T-Shirt Order Form” defaults its To address and Subject. " +
+      ["Where the T-Shirts tab's “T-Shirt Order Email” defaults its To address and Subject. " +
        "Both stay editable per-send on that screen; nothing is ever sent automatically."]));
     var vendorEmailInput = el("input", { type: "text", value: state.appSettings.tshirtVendorEmail || "" });
     body.appendChild(el("div", { class: "form-row" }, [el("span", { class: "form-label", text: "Vendor Email" }), vendorEmailInput]));

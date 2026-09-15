@@ -34,9 +34,18 @@
 
   // The 2 shirt groups (matrix columns on the summary). Vette Fest shirts are
   // unisex — there is no Men's/Women's split anywhere in the workbook.
+  //
+  // label is DISPLAY ONLY (table headers, the order-email body, the Excel
+  // export) — csvLabel is what col below is built from, and MUST stay
+  // "Xtra" regardless of what label says: it's matched against the real
+  // ClubExpress export's own column headers ("Xtra LG", etc.), which the
+  // registration data always uses that literal word for. Renaming label to
+  // "Purchased" (done 2026-09-15, at the user's request) would have quietly
+  // broken every Xtra bucket's CSV lookup if csvLabel didn't exist to keep
+  // the two independent.
   var GROUPS = [
-    { key: "Free", label: "Free" },
-    { key: "Xtra", label: "Xtra" }
+    { key: "Free", label: "Free", csvLabel: "Free" },
+    { key: "Xtra", label: "Purchased", csvLabel: "Xtra" }
   ];
 
   // Build the 12 shirt buckets: { key, col, groupKey, sizeKey }.
@@ -46,7 +55,7 @@
     SIZES.forEach(function (s) {
       SHIRT_BUCKETS.push({
         key: g.key + s.key,
-        col: g.label + " " + s.key,
+        col: g.csvLabel + " " + s.key,
         groupKey: g.key,
         sizeKey: s.key
       });
