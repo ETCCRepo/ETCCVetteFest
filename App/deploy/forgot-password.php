@@ -22,7 +22,7 @@ require __DIR__ . '/lib.php';
 $ADMIN_EMAIL = 'etccwebsite.webmanager@gmail.com';
 $RESET_URL_BASE = 'https://etccapps.com/apps/vettefest/reset-password.php';
 $RESET_FILE = __DIR__ . '/password-reset.json';
-$TOKEN_TTL_SECONDS = 3600; // 1 hour
+$TOKEN_TTL_SECONDS = 86400; // 24 hours
 
 $sent = false;
 $errors = [];
@@ -36,7 +36,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $resetUrl = $RESET_URL_BASE . '?token=' . $token;
         $subject = 'ETCC Vette Fest app — password reset requested';
         $body = "A password reset was requested for the Vette Fest app's login.\n\n" .
-            "Reset it here (link expires in 1 hour):\n" . $resetUrl . "\n\n" .
+            "Reset it here (link expires in 24 hours):\n" . $resetUrl . "\n\n" .
             "If you didn't request this, you can ignore this email — the link " .
             "expires on its own and nothing changes until someone opens it.";
         if (vettefest_send_mail($ADMIN_EMAIL, $subject, $body)) {
@@ -76,7 +76,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
   <div class="sub">East Tennessee Corvette Club — Vette Fest app</div>
   <div class="panel">
     <?php if ($sent): ?>
-      <p class="success">A reset link has been emailed. Check the club's admin inbox — it's valid for 1 hour.</p>
+      <p class="success">A reset link has been emailed. Check the club's admin inbox — it's valid for 24 hours.</p>
     <?php else: ?>
       <?php if ($errors): ?>
         <div class="errors"><?php foreach ($errors as $e) echo '<p style="margin:0">' . htmlspecialchars($e) . '</p>'; ?></div>
