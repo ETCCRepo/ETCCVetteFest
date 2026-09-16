@@ -1,6 +1,13 @@
 # ETCC Vette Fest App — Project Status
 
-Last updated: 2026-09-15 (end of a later session that day). **"Xtra" renamed to
+Last updated: 2026-09-16 (end of session). **Password-reset links extended from 1 hour
+to 24 hours** — both the site-password and Developer-password reset flows, kept in sync
+since they're otherwise identical. Checkpoint v2.60 (`8a47371`). A live
+`data/password-reset.json` on the server (new since this fix shipped) suggests the flow
+was already exercised for real, though this session didn't trigger it. See "This
+session's work (2026-09-16 — password-reset link TTL)".
+
+Previous update: 2026-09-15 (end of a later session that day). **"Xtra" renamed to
 "Purchased" everywhere an officer sees it** (Shirts summary table, order email, Excel
 exports, the Registration tab's own Shirts cell — the last two only surfaced after a
 follow-up screenshot caught what the first pass missed), **"T-Shirt Order Form" renamed
@@ -163,11 +170,11 @@ automated coverage — all of it was verified by hand against the live 2026 even
 (see the session entries below). The count stays at 85 because none of that work touched
 `logic.js`.
 
-**Version:** `App/version.json` — stamped **2.59** in the currently-live
-`App/ETCCVetteFest.html` / `app-bundle.html` on the server (built and deployed 2026-09-15
-23:55, checkpoint commit `e18d7a9`). The file itself now reads `{major:2, minor:60}`,
+**Version:** `App/version.json` — stamped **2.60** in the currently-live
+`App/ETCCVetteFest.html` / `app-bundle.html` on the server (built and deployed 2026-09-16
+00:12, checkpoint commit `8a47371`). The file itself now reads `{major:2, minor:61}`,
 since `build.js` bumps-and-stores the *next* version on every run — the next build will
-stamp "2.60". **Gaps in the version sequence are normal, not lost work:** `build.js` bumps
+stamp "2.61". **Gaps in the version sequence are normal, not lost work:** `build.js` bumps
 on *every* run, including rebuilds that were never committed or deployed, which is why the
 shipped history reads 2.11, 2.12, 2.13, 2.15, 2.17, 2.18, 2.20, 2.22, 2.23, 2.27, 2.34,
 2.37, 2.38, 2.40, 2.41.
@@ -247,6 +254,30 @@ copy.
 **Git: pushed and working**, as of 2026-08-27 — see that session's entry below for the
 one gotcha (a global credential helper that must be worked around on every push from this
 machine).
+
+## This session's work (2026-09-16 — password-reset link TTL)
+
+One small, self-contained fix, at the user's request. Checkpoint **v2.60** (`8a47371`).
+
+**Password-reset links extended from 1 hour to 24 hours** (`8b81f16`). Both
+`forgot-password.php` (site password) and `dev-forgot-password.php` (Developer
+password) are otherwise-identical twins — same `$TOKEN_TTL_SECONDS` constant shape,
+same email/success wording — so both were changed together rather than letting them
+diverge. Three lines per file: the constant (`3600` → `86400`), the email body's
+"link expires in" text, and the on-screen success message's "valid for" text.
+`reset-password.php`/`dev-reset-password.php` needed no change — they only compare
+`time()` against the stored `expiresAt`, which already reflects whatever the TTL was
+at request time.
+
+**Verification, and its honest limit:** confirmed via direct diff that each file
+changed in exactly the three intended spots, PHP braces balanced, and the deploy
+uploaded cleanly. **Not verified**: actually seeing the new "24 hours" success text
+render, since that only happens after a real form POST — which sends a genuine
+password-reset email to the club's admin inbox as a side effect. That wasn't triggered
+deliberately, but a `data/password-reset.json` file was found on the server (created
+2026-09-16 00:03, just before this session's checkpoint deploy) that didn't exist
+before — so the flow **was** exercised live by someone, most likely the user testing
+the change themselves, in between the fix shipping and this checkpoint running.
 
 ## This session's work (2026-09-15 — Xtra rename + report Export buttons)
 
