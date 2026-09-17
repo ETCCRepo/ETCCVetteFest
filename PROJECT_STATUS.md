@@ -1,6 +1,12 @@
 # ETCC Vette Fest App — Project Status
 
-Last updated: 2026-09-17 (end of session). **Four pieces of work, all shipped and
+Last updated: 2026-09-17 (end of a later session that day). **No app code changed** —
+recorded two standing workflow preferences as persistent memory for future sessions:
+always deploy a change immediately and state the live URL + version, and no Browser-pane
+previews (verify via API/curl instead). Checkpoint v2.66 (`7402d84`, bump-only). See
+"This session's work (2026-09-17 — later session: standing workflow preferences)".
+
+Previous update: 2026-09-17 (end of session). **Four pieces of work, all shipped and
 verified live**: a new **Error Log** on the Setup tab recording every failed password
 attempt (site login, Developer login, event-delete, restore) without ever storing the
 attempted password itself; a **heartbeat-token** mechanism (ported from CarShow) so the
@@ -182,11 +188,11 @@ automated coverage — all of it was verified by hand against the live 2026 even
 (see the session entries below). The count stays at 85 because none of that work touched
 `logic.js`.
 
-**Version:** `App/version.json` — stamped **2.65** in the currently-live
+**Version:** `App/version.json` — stamped **2.66** in the currently-live
 `App/ETCCVetteFest.html` / `app-bundle.html` on the server (built and deployed 2026-09-17
-11:23, checkpoint commit `80dcb83`). The file itself now reads `{major:2, minor:66}`,
+15:35, checkpoint commit `7402d84`). The file itself now reads `{major:2, minor:67}`,
 since `build.js` bumps-and-stores the *next* version on every run — the next build will
-stamp "2.66". Two of this session's four changes (the heartbeat token and the local-time
+stamp "2.67". Two of this session's four changes (the heartbeat token and the local-time
 fix) touched only `deploy/` PHP and a local Node script, not `App/src`, so they shipped
 with no build/version bump of their own — only v2.62 and v2.64 reflect actual `App/src`
 changes. **Gaps in the version sequence are normal, not lost work:** `build.js` bumps
@@ -269,6 +275,28 @@ copy.
 **Git: pushed and working**, as of 2026-08-27 — see that session's entry below for the
 one gotcha (a global credential helper that must be worked around on every push from this
 machine).
+
+## This session's work (2026-09-17 — later session: standing workflow preferences)
+
+No app code changed — this short session recorded two workflow instructions the user
+gave, as persistent memory for future sessions (outside this git repo, in
+`~/.claude/projects/<this-project>/memory/`), rather than something that would otherwise
+only live in one conversation's own context:
+
+1. **Always deploy after any change, and state the live URL + version.** From now on, a
+   code change to this app should be built, deployed, committed, and pushed in the SAME
+   turn — not left committed-but-undeployed for a separate later checkpoint request —
+   and every such turn should close with the live URL
+   (`https://etccapps.com/apps/vettefest/`) and the actual version number now live (not
+   just "deployed").
+2. **No Browser-pane previews** — confirmed as a standing preference, not the one-off it
+   could have read as when first said mid-session earlier the same day. Verification should use
+   direct API/curl calls against the live server instead, which already tended to be the
+   more useful check for this app's server-side logic anyway (the local static preview
+   has no PHP backend, so it can't get past the "no events yet" screen regardless).
+
+Checkpoint v2.66 (`7402d84`, build-artifact-only — confirms build/deploy still run
+clean; nothing new to ship).
 
 ## This session's work (2026-09-17 — Error Log, heartbeat token, PHP errors, local time)
 
