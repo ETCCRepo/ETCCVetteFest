@@ -1,6 +1,18 @@
 # ETCC Vette Fest App — Project Status
 
-Last updated: 2026-09-16 (end of session). **Password-reset links extended from 1 hour
+Last updated: 2026-09-17 (end of session). **Four pieces of work, all shipped and
+verified live**: a new **Error Log** on the Setup tab recording every failed password
+attempt (site login, Developer login, event-delete, restore) without ever storing the
+attempted password itself; a **heartbeat-token** mechanism (ported from CarShow) so the
+scheduled import task can report "couldn't even authenticate" failures onto the same
+View Logs list even when the site password itself is broken; a **"View PHP Error Log"**
+link surfacing PHP's own runtime errors for the first time ever; and **every recorded
+timestamp switched from UTC to ETCC's own local time** (America/New York) across the
+whole `deploy/` PHP tree plus the local sync script. Checkpoints v2.62 (`9eaf7c4`), v2.64
+(`5e3da74`), v2.65 (`80dcb83`). See "This session's work (2026-09-17 — Error Log,
+heartbeat token, PHP errors, local time)".
+
+Previous update: 2026-09-16 (end of session). **Password-reset links extended from 1 hour
 to 24 hours** — both the site-password and Developer-password reset flows, kept in sync
 since they're otherwise identical. Checkpoint v2.60 (`8a47371`). A live
 `data/password-reset.json` on the server (new since this fix shipped) suggests the flow
@@ -170,11 +182,14 @@ automated coverage — all of it was verified by hand against the live 2026 even
 (see the session entries below). The count stays at 85 because none of that work touched
 `logic.js`.
 
-**Version:** `App/version.json` — stamped **2.60** in the currently-live
-`App/ETCCVetteFest.html` / `app-bundle.html` on the server (built and deployed 2026-09-16
-00:12, checkpoint commit `8a47371`). The file itself now reads `{major:2, minor:61}`,
+**Version:** `App/version.json` — stamped **2.65** in the currently-live
+`App/ETCCVetteFest.html` / `app-bundle.html` on the server (built and deployed 2026-09-17
+11:23, checkpoint commit `80dcb83`). The file itself now reads `{major:2, minor:66}`,
 since `build.js` bumps-and-stores the *next* version on every run — the next build will
-stamp "2.61". **Gaps in the version sequence are normal, not lost work:** `build.js` bumps
+stamp "2.66". Two of this session's four changes (the heartbeat token and the local-time
+fix) touched only `deploy/` PHP and a local Node script, not `App/src`, so they shipped
+with no build/version bump of their own — only v2.62 and v2.64 reflect actual `App/src`
+changes. **Gaps in the version sequence are normal, not lost work:** `build.js` bumps
 on *every* run, including rebuilds that were never committed or deployed, which is why the
 shipped history reads 2.11, 2.12, 2.13, 2.15, 2.17, 2.18, 2.20, 2.22, 2.23, 2.27, 2.34,
 2.37, 2.38, 2.40, 2.41.
@@ -254,6 +269,155 @@ copy.
 **Git: pushed and working**, as of 2026-08-27 — see that session's entry below for the
 one gotcha (a global credential helper that must be worked around on every push from this
 machine).
+
+## This session's work (2026-09-17 — Error Log, heartbeat token, PHP errors, local time)
+
+Four pieces of work, each shipped and verified live before moving to the next. Checkpoints
+**v2.62** (`9eaf7c4`), **v2.64** (`5e3da74`), **v2.65** (`80dcb83`).
+
+### 1. New Error Log on the Setup tab, recording failed password attempts (`13a9f4e`, v2.62)
+
+At the user's request ("modify view logs to record error logs especially password
+failures"). New global (not per-event) security event log — a login failure happens
+before any event is even selected, so it can't live in any one `data/<year>/` folder.
+
+- **`lib.php`**: `vettefest_log_security_event($event, $detail)` appends
+  `{timestamp, event, detail, ip}` to a new `data/security-log.json` (alongside
+  `shows.json`). Capped at 500 entries (`VETTEFEST_SECURITY_LOG_KEEP`) in the same write
+  that appends, so a sustained brute-force flood can't grow the file unbounded.
+  **Deliberately never logs the attempted password itself** — only that an attempt
+  failed, against which gate, and the requesting IP; a logged wrong-guess string is
+  itself a security smell (could be a real password mistyped or reused elsewhere). A
+  companion `vettefest_log_error($context, $detail)` exists for any future non-password
+  error worth recording — not called anywhere yet.
+- **Four call sites wired in**: `index.php` (`login_failed` on the main site login,
+  `dev_login_failed` on the Developer Login screen), `shows.php` (`dev_password_failed`
+  on event delete), `backup.php` (`dev_password_failed` on restore).
+- **New `security-log.php`** (view-only, `list` action, session-or-site-password auth —
+  reading a log isn't destructive, unlike the actions it records, so it doesn't need the
+  elevated Developer password those do).
+- **Front end**: new "Error Log" panel on the Setup tab (after Backups) — collapsible
+  "View Logs" table (Time/Event/Detail/IP), same pattern the Backups panel's own log
+  already uses. `SECURITY_EVENT_LABELS` in `app.js` maps the machine-tag event strings to
+  human labels; keep it in sync with every PHP-side call site.
+
+**Verified live**: deliberately sent a wrong site-login password (safe — no lockout), got
+the expected 401, then confirmed via `security-log.php` that the attempt was recorded
+with the correct event/detail/IP and — critically — no trace of the attempted password.
+Also confirmed the log-viewing endpoint refuses an unauthenticated request. The other
+three call sites weren't independently triggered (each needs a real session or the
+Developer password) — they call the same proven function with only a different string.
+
+### 2. Ported CarShow's heartbeat token — report "couldn't even start" failures (`a39adf2`)
+
+CarShow's own `sync-registrations.js`/`logs.php` added this first; ported here at the
+user's explicit request, same mechanism. Solves a real gap: if the scheduled Windows task
+can't even authenticate with the site password (wrong/missing `VETTEFEST_SITE_PASSWORD`),
+it used to have no way to report that anywhere but its own local machine's log file —
+invisible from the site entirely.
+
+- **`logs.php`** gained a `report_failure` action, authenticated by a **separate fixed
+  token** (`$HEARTBEAT_TOKEN` in `secrets.php`) instead of the site password —
+  deliberately, so a broken site password can't also break this one reporting path. It
+  writes a normal `sync-*.log` file, same directory and naming pattern real import logs
+  use, so **it needed zero front-end changes** — the existing View Logs list already
+  shows it.
+- **`sync-registrations.js`** gained `reportStartupFailure()`, called at every point a
+  failure happens before the script ever reaches its normal log-archiving step: missing/
+  wrong site password, invalid year, a rejected schedule check, no ClubExpress event URL
+  configured, and the outermost catch-all.
+- **Token generation**: a fresh, independent token (`openssl rand -hex 24`) — **not**
+  shared with CarShow's own token, so a compromise of one app's reporting channel can't
+  touch the other's. Now lives in three places: the live `secrets.php`, the local
+  `secrets.php` (gitignored, not committed), and a persistent Windows user env var
+  (`VETTEFEST_HEARTBEAT_TOKEN`) for the scheduled task to actually use.
+- **`secrets.php` was updated on the live server via a deliberate one-off FTP upload** —
+  `ftp-deploy.sh` never touches that file by design (to prevent an accidental overwrite
+  of live secrets with a stale local copy); this bypassed that on purpose, for this one
+  file, to add the new token. Worth knowing if a future session ever needs to update a
+  live secret again: same manual-upload approach, same file, still gitignored.
+
+**Verified live**: sent a real `report_failure` call with the correct token (succeeded),
+confirmed the resulting log entry appeared in the normal View Logs list with the correct
+FAILED/RESULT text, confirmed a wrong token is refused with 401.
+
+### 3. "View PHP Error Log" link — a genuinely different log from #1 (`cc93dbc`, v2.64)
+
+Distinct from `security-log.json`: that's application-level events this app writes
+*deliberately* (failed passwords). This is PHP's own *unplanned* runtime
+errors/warnings/notices, which had never been captured anywhere before now — what the
+user actually meant by "the website error log" (confirmed via a clarifying question
+before building anything, since the phrase was genuinely ambiguous between this, the
+already-existing Error Log panel, and something else entirely).
+
+- **`lib.php`** turns on `log_errors`/`error_log` at the top of the file — runs on every
+  request, since every endpoint requires `lib.php` near the top — routing PHP's error
+  stream into `data/php-error.log` (global, same `.htaccess` deny-all coverage every
+  other `data/` file has).
+- **New `php-error-log.php`** streams that file as a plain link (not a fetch+JSON action)
+  — same technique `flyer.php`'s "View current flyer" and `logs.php`'s own `get` action
+  already use: session-or-site-password auth, so a signed-in officer's existing session
+  cookie is enough for a bare click with no password in the URL. Shows only the most
+  recent 500 KB if the file grows past that — a raw PHP error stream has no natural
+  per-entry boundary to purge or cap the way the other logs do.
+- **Front end**: a "🐘 View PHP Error Log" link added above the password-failure table in
+  `buildSecurityLogSection()`.
+
+**Verified live** via a direct API call: correctly returned "No PHP errors have been
+logged" (expected — the config had just gone live with nothing to report yet).
+
+### 4. Every timestamp now reads as local time (America/New_York), not UTC (`097b973`, v2.65)
+
+At the user's request ("record and display all error and log files in local time").
+
+- **`lib.php`** now calls `date_default_timezone_set('America/New_York')` globally at
+  the very top of the file — before the PHP error-log setup from #3, since PHP's own
+  `error_log()` writer needs the timezone active before an error is ever logged, not
+  merely before the file finishes loading. (`import-schedule.php` and `backup.php`
+  already had their own copy of this exact line; left as harmless duplicates rather than
+  removed, to keep the change minimal.)
+- **That alone changes nothing by itself**: `gmdate()` is immune to the default timezone
+  by design and always returns UTC regardless. Every `gmdate('c')` /
+  `gmdate('YmdHis')` / `gmdate('Ymd-His')` call across `deploy/*.php` was changed to the
+  timezone-respecting `date()` equivalent (identical signature, drop-in) — touched
+  `lib.php` (`vettefest_log_security_event`, `vettefest_record_import_history`,
+  `vettefest_run_backup`'s own zip filename, `vettefest_backup_auto_check`),
+  `backup.php`, `flyer.php`, `import-schedule.php`, `logs.php` (including the
+  `report_failure` action from #2, and the View Logs file listing's `mtime`),
+  `registrations-import.php`, `registrations-upload.php`, `shows.php`.
+- **`sync-registrations.js`** (a local Node script, untouched by the PHP-side fix) had
+  its own separate, pre-existing inconsistency: the log **filename** already used local
+  machine time (`logFileName()`'s own Date accessors), but the log **lines inside it**
+  used `toISOString()` (UTC) — two different clocks in the same file. Fixed with a new
+  `nowLocal()` helper matching the filename's own existing convention, applied at all 5
+  call sites (`log()`, `logText()`, `recordFailure()`, the final RESULT line).
+- **Front end needed no changes** — every displayed timestamp already goes through
+  `fmtDate(new Date(...))`, confirmed correct at every call site by reading each one; JS
+  `Date` accessors already render in the viewing browser's own local time. This fix is
+  entirely about the *recorded* value: anyone reading a raw file directly (the PHP error
+  log, an archived sync log, a backup zip's JSON, `security-log.json` over FTP) now sees
+  a timestamp that already reads as local time, with no mental UTC-offset conversion
+  needed.
+
+**Verified live, not just by reading the diff**: deliberately triggered a fresh failed
+login and confirmed the resulting `security-log.json` entry carries a `-04:00` offset
+matching the actual Eastern time at that moment (not the ~4-hour-different UTC value the
+old code would have written); confirmed the View Logs file listing now reports existing
+files' `mtime` with the same correct offset (`filemtime()` itself is timezone-agnostic —
+only the formatting changed); confirmed `php-error-log.php` still cleanly reports no
+errors after the change.
+
+### Verification note across all four
+
+**No `App/src` changes were needed for #2 or #4** (pure `deploy/`-PHP-and-local-script
+changes), so those two shipped with no rebuild or version bump of their own — only #1 and
+#3 touched `App/src/app.js`. 85/85 regression tests pass throughout; every touched PHP
+file brace-balanced; `sync-registrations.js` syntax-checked with `node --check`.
+**The user asked mid-session to stop using the Browser-pane preview** ("disable all
+website previews. user will verify changes") — respected from that point on; all
+verification after that point used direct API/curl calls instead, which are a different
+mechanism (server-to-server HTTP, no rendered preview) and were not what that instruction
+was about.
 
 ## This session's work (2026-09-16 — password-reset link TTL)
 
@@ -1639,6 +1803,27 @@ having the token; see that section and "Known follow-ups" for the exact command.
     needs a live authenticated session with an event open, same limitation every other
     UI-only change this project has hit. Ask the user rather than assume either way if
     it matters.
+17. **Three of the Error Log's four `vettefest_log_security_event()` call sites were
+    never independently triggered live** (2026-09-17) — only `login_failed` (the main
+    site login) was. `dev_login_failed` and the two `dev_password_failed` sites
+    (event-delete, restore) call the exact same, now-proven function with only a
+    different string argument, so the residual risk is low, but nobody has actually
+    watched one of those three fire and confirmed it shows up correctly in the Error Log
+    table. Would need either a real session login or the Developer password to test —
+    neither available to that session.
+18. **The Browser-pane preview was disabled mid-session on 2026-09-17** ("disable all
+    website previews. user will verify changes") — a standing instruction for THIS user,
+    not a one-off. A future session should default to API/curl-based verification (which
+    is unaffected — it's a different mechanism, not a rendered preview) rather than
+    reaching for `preview_start`/the Claude Browser pane, unless the user asks for that
+    back explicitly.
+19. **`secrets.php` was updated on the live server via a deliberate one-off FTP upload on
+    2026-09-17**, to add `$HEARTBEAT_TOKEN` — outside `ftp-deploy.sh`, which still never
+    touches that file by design. If a future session needs to update a live secret again
+    (a new credential, a rotated one), the same manual-upload approach is the way to do
+    it — don't add secrets.php to the deploy script's own upload list, that would defeat
+    the whole point of it being excluded (protecting against an accidental overwrite of
+    live secrets with a stale local copy).
 
 ## Architecture notes worth preserving
 
