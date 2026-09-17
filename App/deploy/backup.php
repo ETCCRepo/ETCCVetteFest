@@ -52,7 +52,7 @@ $historyFile = vettefest_backup_history_file();
 
 if ($action === 'run') {
     $result = vettefest_run_backup();
-    $entry = ['timestamp' => gmdate('c'), 'status' => $result['ok'] ? 'success' : 'failed', 'reason' => 'manual'];
+    $entry = ['timestamp' => date('c'), 'status' => $result['ok'] ? 'success' : 'failed', 'reason' => 'manual'];
     if ($result['ok']) {
         $entry['fileName'] = $result['fileName'];
         $entry['sizeBytes'] = $result['sizeBytes'];
@@ -260,7 +260,7 @@ if ($action === 'restore') {
     if (!empty($result['preRestoreBackup'])) {
         $preRestorePath = $dir . '/' . $result['preRestoreBackup'];
         vettefest_append_json_list($historyFile, [
-            'timestamp' => gmdate('c', is_file($preRestorePath) ? filemtime($preRestorePath) : time()),
+            'timestamp' => date('c', is_file($preRestorePath) ? filemtime($preRestorePath) : time()),
             'status' => 'success',
             'reason' => 'pre-restore',
             'fileName' => $result['preRestoreBackup'],
@@ -269,7 +269,7 @@ if ($action === 'restore') {
     }
 
     $entry = [
-        'timestamp' => gmdate('c'),
+        'timestamp' => date('c'),
         'status' => !empty($result['ok']) ? 'success' : 'failed',
         'reason' => 'restore',
         'restoredFrom' => $fileName,

@@ -105,7 +105,7 @@ if ($action === 'create') {
         'year' => (int)$year,
         'name' => $name,
         'status' => 'active',
-        'created' => gmdate('c')
+        'created' => date('c')
     ];
     // The very first event created on a fresh install becomes current, so
     // there is always exactly one live event without a separate step.

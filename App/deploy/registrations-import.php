@@ -71,7 +71,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['reg_csv'])) {
                 'regCsv' => $regCsv,
                 'actCsv' => $actCsv,
                 'generatedAt' => (int)(microtime(true) * 1000),
-                'uploadedAt' => gmdate('c'),
+                'uploadedAt' => date('c'),
             ];
             if (vettefest_write_json($REG_FILE, $data)) {
                 $imported = ['regRows' => $regRows, 'actRows' => $actRows];

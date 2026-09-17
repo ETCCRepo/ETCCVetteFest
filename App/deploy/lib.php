@@ -6,6 +6,21 @@
 // JSON read/write, safe-inline-script embedding, SMTP sending, and the
 // per-event data paths that would otherwise be copy-pasted across all of them.
 
+// Every timestamp this app records or displays should read as ETCC's own
+// local time (America/New_York), not UTC — set globally here, once, rather
+// than in every individual endpoint (import-schedule.php and backup.php
+// already had their own copy of this exact line before this existed; left
+// as harmless duplicates rather than removed, to keep this change minimal).
+// gmdate() is immune to this and ALWAYS returns UTC regardless — every
+// gmdate('c')-style call across deploy/*.php was changed to date('c') (see
+// each file's own diff) specifically so this setting actually takes effect
+// on every timestamp this app writes, not just ones already using date().
+// Must run before the error-log setup just below: PHP's own error_log()
+// writer formats its timestamp using whichever timezone is active the
+// moment an error is actually logged, so this needs to be set before that
+// can ever happen, not merely before this file finishes loading.
+date_default_timezone_set('America/New_York');
+
 // Routes PHP's own runtime errors/warnings/notices — not something this app
 // ever wrote deliberately, unlike vettefest_log_security_event()'s own
 // separate JSON log below — into a file this app controls, instead of
@@ -137,7 +152,7 @@ function vettefest_record_import_history($year, $regRows, $actRows, $source = 'b
     $file = vettefest_show_file($year, 'import-history.json');
     if ($file === null) return false;
     return vettefest_append_json_list($file, [
-        'timestamp' => gmdate('c'),
+        'timestamp' => date('c'),
         'regRows' => $regRows === null ? null : (int)$regRows,
         'actRows' => $actRows === null ? null : (int)$actRows,
         'source' => $source,
@@ -619,7 +634,7 @@ function vettefest_run_backup() {
     $dir = vettefest_backups_dir();
     if ($dir === null) return ['ok' => false, 'error' => 'Could not create the backups directory.'];
 
-    $fileName = gmdate('YmdHis') . '-VetteFestData.zip';
+    $fileName = date('YmdHis') . '-VetteFestData.zip';
     $zipPath = $dir . '/' . $fileName;
 
     $zip = new ZipArchive();
@@ -671,7 +686,7 @@ function vettefest_backup_auto_check() {
     if ($schedule['lastAutoRunDate'] === $today) return;
 
     $result = vettefest_run_backup();
-    $entry = ['timestamp' => gmdate('c'), 'status' => $result['ok'] ? 'success' : 'failed', 'reason' => 'auto'];
+    $entry = ['timestamp' => date('c'), 'status' => $result['ok'] ? 'success' : 'failed', 'reason' => 'auto'];
     if ($result['ok']) {
         $entry['fileName'] = $result['fileName'];
         $entry['sizeBytes'] = $result['sizeBytes'];
@@ -990,7 +1005,7 @@ function vettefest_log_security_event($event, $detail = '') {
     $path = vettefest_security_log_path();
     if ($path === null) return false;
     $entry = [
-        'timestamp' => gmdate('c'),
+        'timestamp' => date('c'),
         'event' => (string)$event,
         'detail' => (string)$detail,
         'ip' => (string)($_SERVER['REMOTE_ADDR'] ?? ''),

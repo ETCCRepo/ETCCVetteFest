@@ -62,7 +62,7 @@ if ($action === 'request') {
         echo json_encode(['ok' => false, 'error' => 'Please log in first.']);
         exit;
     }
-    $now = gmdate('c');
+    $now = date('c');
     if (!vettefest_write_json($requestFile, ['requestedAt' => $now, 'handledAt' => null, 'lastStatus' => null, 'lastError' => null])) {
         http_response_code(500);
         echo json_encode(['ok' => false, 'error' => 'Could not save the request.']);
@@ -138,7 +138,7 @@ if ($action === 'mark_start') {
     // than only ever finding out a run happened after it's already done.
     $reason = (string)($input['reason'] ?? '');
     vettefest_write_json($runStatusFile, [
-        'startedAt' => gmdate('c'),
+        'startedAt' => date('c'),
         'reason' => $reason,
         'completedAt' => null,
         'status' => null,
@@ -215,7 +215,7 @@ $logFile = (string)($input['logFile'] ?? '');
 
 if ($reason === 'manual') {
     if (is_array($request)) {
-        $request['handledAt'] = gmdate('c');
+        $request['handledAt'] = date('c');
         $request['lastStatus'] = $status;
         $request['lastError'] = $status === 'failed' ? $error : '';
         vettefest_write_json($requestFile, $request);
@@ -240,7 +240,7 @@ if ($reason === 'manual') {
 // the Setup tab still has a completion to show, just with no start time).
 $runStatusRaw = is_file($runStatusFile) ? json_decode(file_get_contents($runStatusFile), true) : null;
 $runStatus = is_array($runStatusRaw) ? $runStatusRaw : ['startedAt' => null, 'reason' => $reason];
-$runStatus['completedAt'] = gmdate('c');
+$runStatus['completedAt'] = date('c');
 $runStatus['status'] = $status;
 $runStatus['error'] = $status === 'failed' ? $error : '';
 $runStatus['logFile'] = $logFile;
@@ -255,7 +255,7 @@ vettefest_write_json($runStatusFile, $runStatus);
 // failure — otherwise a success would show up twice.
 if ($status === 'failed') {
     vettefest_append_json_list(vettefest_show_file($year, 'import-history.json'), [
-        'timestamp' => gmdate('c'),
+        'timestamp' => date('c'),
         'regRows' => null,
         'actRows' => null,
         'source' => 'cli',

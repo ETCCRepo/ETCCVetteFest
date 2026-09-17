@@ -57,14 +57,30 @@ const year = process.env.VETTEFEST_YEAR || String(new Date().getFullYear());
 // Built up in memory and shipped to logs.php at the end of the run, under the
 // filename decided up front (step 1 of the old skill) so the name the History
 // tab's log icon links to always matches the name the log is stored under.
+
+// Every timestamp this script writes into a log should read as this
+// machine's own local clock — Eastern for the Knoxville machine that
+// actually runs this — same convention logFileName() below already used
+// for the FILENAME; this just brings the log LINES themselves in line with
+// it, instead of toISOString()'s UTC (which made every line read several
+// hours off from when it actually happened). Deliberately local Date
+// accessors, not an explicit America/New_York formatter: matches
+// logFileName()'s own existing approach rather than introducing a second,
+// different mechanism that could drift from it.
+function nowLocal() {
+  const d = new Date();
+  const p = (n) => String(n).padStart(2, "0");
+  return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate()) +
+    "T" + p(d.getHours()) + ":" + p(d.getMinutes()) + ":" + p(d.getSeconds());
+}
 const logLines = [];
 function log(msg) {
-  const line = new Date().toISOString() + "  " + msg;
+  const line = nowLocal() + "  " + msg;
   logLines.push(line);
   console.log(line);
 }
 function logText(result) {
-  return [new Date().toISOString() + "  START", ...logLines, result].join("\n") + "\n";
+  return [nowLocal() + "  START", ...logLines, result].join("\n") + "\n";
 }
 function logFileName(d = new Date()) {
   const p = (n) => String(n).padStart(2, "0");
@@ -151,7 +167,7 @@ function runUpload(eventUrl, file) {
 // non-zero exit code as the task's "Last Run Result", and the Setup tab's
 // "Last run" line plus the History tab already carry the human-readable story.
 function recordFailure(reason) {
-  const line = new Date().toISOString() + "  FAILED: " + reason + "\n";
+  const line = nowLocal() + "  FAILED: " + reason + "\n";
   try { fs.appendFileSync(LOCAL_LOG, line); } catch (_) { /* best effort */ }
   console.error("Vette Fest import FAILED -- " + reason);
 }
@@ -286,7 +302,7 @@ async function reportStartupFailure(reason) {
 
   // --- Step 6: archive the log, on success AND failure.
   await storeLog(file, logText(
-    new Date().toISOString() + "  RESULT: " + (status === "success" ? "SUCCESS" : "FAILED: " + errorLine)
+    nowLocal() + "  RESULT: " + (status === "success" ? "SUCCESS" : "FAILED: " + errorLine)
   )).catch((e) => console.error("Log archive failed: " + e.message));
 
   // --- Step 7: mark handled either way, so a persistent failure does not

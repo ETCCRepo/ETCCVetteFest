@@ -57,7 +57,7 @@ $data = [
     'regCsv' => $regCsv,
     'actCsv' => $actCsv,
     'generatedAt' => $generatedAt,
-    'uploadedAt' => gmdate('c'),
+    'uploadedAt' => date('c'),
 ];
 
 if (!vettefest_write_json($regFile, $data)) {

@@ -77,7 +77,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         'mime'       => $mime,
         'name'       => $name,
         'dataB64'    => base64_encode($bytes),
-        'uploadedAt' => gmdate('c'),
+        'uploadedAt' => date('c'),
     ];
     if (!vettefest_write_json($FLYER_FILE, $data)) {
         http_response_code(500);
