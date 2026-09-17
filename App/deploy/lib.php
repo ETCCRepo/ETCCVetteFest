@@ -942,3 +942,69 @@ function vettefest_rrmdir($dir) {
     }
     @rmdir($dir);
 }
+
+// ---------------------------------------------------------------------------
+// Security/error log (Setup tab > Error Log; see security-log.php)
+// ---------------------------------------------------------------------------
+// A global (not per-event) log of noteworthy failures — every wrong-password
+// attempt against any of this app's four password gates (site login,
+// Developer login, event delete, backup restore), plus a general-purpose
+// vettefest_log_error() for anything else worth a permanent record. Lives
+// under data/ alongside shows.json — same reasoning backup-schedule.json
+// already uses there: this spans every event, not one, so it can't live in
+// any single data/<year>/ folder.
+//
+// Deliberately NEVER logs the attempted password itself — only that an
+// attempt failed, against which gate, and the requesting IP. Logging a
+// wrong-guess string is itself a security smell: it could be a real
+// password mistyped, or a real password reused from somewhere else.
+define('VETTEFEST_SECURITY_LOG_KEEP', 500);
+
+function vettefest_security_log_path() {
+    $root = vettefest_data_root();
+    return $root === null ? null : $root . '/security-log.json';
+}
+
+// $event is a short machine tag (e.g. 'login_failed', 'dev_login_failed',
+// 'dev_password_failed') — the front end maps these to a human label; keep
+// new tags added here in sync with SECURITY_EVENT_LABELS in app.js. $detail
+// is free text with NO secrets in it (never the attempted password).
+function vettefest_log_security_event($event, $detail = '') {
+    $path = vettefest_security_log_path();
+    if ($path === null) return false;
+    $entry = [
+        'timestamp' => gmdate('c'),
+        'event' => (string)$event,
+        'detail' => (string)$detail,
+        'ip' => (string)($_SERVER['REMOTE_ADDR'] ?? ''),
+    ];
+    $fh = fopen($path, 'c+');
+    if (!$fh || !flock($fh, LOCK_EX)) { if ($fh) fclose($fh); return false; }
+    $size = filesize($path) ?: 0;
+    $raw = $size > 0 ? fread($fh, $size) : '';
+    $list = $raw ? json_decode($raw, true) : [];
+    if (!is_array($list)) $list = [];
+    $list[] = $entry;
+    // Capped in the SAME write (not a separate purge step) so a sustained
+    // flood of failed logins can never grow this file unbounded — the
+    // oldest entry drops the moment a new one pushes past the cap.
+    if (count($list) > VETTEFEST_SECURITY_LOG_KEEP) {
+        $list = array_slice($list, count($list) - VETTEFEST_SECURITY_LOG_KEEP);
+    }
+    ftruncate($fh, 0);
+    rewind($fh);
+    fwrite($fh, json_encode($list, JSON_PRETTY_PRINT));
+    fflush($fh);
+    flock($fh, LOCK_UN);
+    fclose($fh);
+    return true;
+}
+
+// General-purpose companion to vettefest_log_security_event() above, for a
+// genuine application error worth a permanent record (not a password
+// failure) — e.g. a caught exception somewhere unexpected. Not currently
+// called anywhere; here so a future session has a ready place to put one
+// rather than inventing a fifth ad-hoc logging mechanism.
+function vettefest_log_error($context, $detail = '') {
+    return vettefest_log_security_event('error:' . (string)$context, $detail);
+}

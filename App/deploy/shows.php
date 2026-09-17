@@ -146,6 +146,7 @@ if ($action === 'delete') {
     $devOk = !empty($DEV_PASSWORD_HASH) && $devPw !== '' &&
              hash_equals($DEV_PASSWORD_HASH, crypt($devPw, $DEV_PASSWORD_HASH));
     if (!$devOk) {
+        vettefest_log_security_event('dev_password_failed', 'event delete (year ' . $year . ')');
         shows_fail('The Developer password is required to delete an event.', 401);
     }
     $dir = vettefest_show_dir($year);

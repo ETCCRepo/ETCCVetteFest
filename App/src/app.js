@@ -95,6 +95,16 @@
     deleteBackupConfirm: null, // timestamp of the backup log entry pending delete confirm, or null
     deleteBackupError: null,   // e.g. "it's the only backup left" — shown in the confirm modal
 
+    // Setup tab > Error Log — read-only view of security-log.json (every
+    // failed password attempt against any of the app's four gates, plus any
+    // vettefest_log_error() call) via security-log.php. See
+    // toggleSecurityLogPanel()/loadSecurityLogList() below.
+    securityLogPanelOpen: false,
+    securityLogList: null,
+    securityLogKeep: 500, // overwritten by the server's real VETTEFEST_SECURITY_LOG_KEEP once loaded; this default is just for the hint text before that first load
+    securityLogLoading: false,
+    securityLogError: null,
+
     // Setup tab > Backups > per-row "↺ Restore" — see openRestoreConfirm()
     // etc. below. restoreConfirm holds the timestamp of the backup log entry
     // being restored (or null); restoreYears is that specific backup's
@@ -1731,7 +1741,109 @@
 
     wrap.appendChild(buildImportScheduleSection());
     wrap.appendChild(buildBackupsSection());
+    wrap.appendChild(buildSecurityLogSection());
     return wrap;
+  }
+
+  // Machine event tag (vettefest_log_security_event()'s $event, lib.php) ->
+  // human label. Keep in sync with every vettefest_log_security_event() call
+  // site across the deploy/ PHP — index.php (login_failed, dev_login_failed),
+  // shows.php and backup.php (dev_password_failed). An unrecognized tag
+  // (e.g. a future 'error:...' from vettefest_log_error()) falls back to the
+  // raw tag rather than hiding the row.
+  var SECURITY_EVENT_LABELS = {
+    login_failed: "Site login failed",
+    dev_login_failed: "Developer login failed",
+    dev_password_failed: "Developer password rejected"
+  };
+  function securityEventLabel(event) { return SECURITY_EVENT_LABELS[event] || event; }
+
+  // Setup tab > Error Log — "View Logs" toggle + table (security-log.php
+  // action=list), same collapsible pattern as the Import Schedule's own Log
+  // Directory field and the Backups panel's own log. Global, not per-event:
+  // most of what lands here (a failed login) happens before any event is
+  // even selected.
+  function toggleSecurityLogPanel() {
+    state.securityLogPanelOpen = !state.securityLogPanelOpen;
+    if (state.securityLogPanelOpen && state.securityLogList === null) {
+      loadSecurityLogList();
+      return; // loadSecurityLogList() already re-renders
+    }
+    renderViews();
+  }
+  function loadSecurityLogList() {
+    if (!SITE_CONFIG.securityLogApiUrl) return;
+    state.securityLogLoading = true;
+    state.securityLogError = null;
+    renderViews();
+    fetch(SITE_CONFIG.securityLogApiUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "list" })
+    }).then(function (res) { return res.json().then(function (data) { return { ok: res.ok, data: data }; }); })
+      .then(function (r) {
+        state.securityLogLoading = false;
+        if (r.ok && r.data && r.data.ok) {
+          state.securityLogList = r.data.entries || [];
+          if (r.data.keep) state.securityLogKeep = r.data.keep;
+        } else {
+          state.securityLogError = "Could not load the error log.";
+        }
+        renderViews();
+      }).catch(function () {
+        state.securityLogLoading = false;
+        state.securityLogError = "Could not load the error log — check your connection.";
+        renderViews();
+      });
+  }
+  function buildSecurityLogSection() {
+    var toggleBtn = el("button", { type: "button", class: "btn", style: "font-size:12px; padding:4px 10px" },
+      [state.securityLogPanelOpen ? "▲ Hide Logs" : "📂 View Logs"]);
+    toggleBtn.addEventListener("click", toggleSecurityLogPanel);
+
+    var kids = [
+      el("div", { class: "form-row" }, [
+        el("span", { class: "form-label", text: "Error Log" }),
+        el("div", {}, [toggleBtn])
+      ])
+    ];
+
+    if (state.securityLogPanelOpen) {
+      if (state.securityLogLoading) {
+        kids.push(el("div", { class: "hint" }, ["Loading…"]));
+      } else if (state.securityLogError) {
+        kids.push(el("div", { class: "form-error" }, [state.securityLogError]));
+      } else if (state.securityLogList && state.securityLogList.length) {
+        var rows = state.securityLogList.slice().reverse();
+        kids.push(el("table", { class: "grid", style: "margin-top:8px" }, [
+          el("thead", {}, [el("tr", {}, [
+            el("th", { text: "Time" }), el("th", { text: "Event" }), el("th", { text: "Detail" }), el("th", { text: "IP" })
+          ])]),
+          el("tbody", {}, rows.map(function (r) {
+            return el("tr", { class: "backup-row-fail" }, [
+              el("td", { text: r.timestamp ? fmtDate(r.timestamp) : "" }),
+              el("td", { text: securityEventLabel(r.event) }),
+              el("td", { text: r.detail || "" }),
+              el("td", { text: r.ip || "" })
+            ]);
+          }))
+        ]));
+      } else if (state.securityLogList) {
+        kids.push(el("div", { class: "hint" }, ["No errors or failed password attempts recorded."]));
+      }
+    }
+
+    return el("div", { class: "panel", style: "margin-top:16px" }, [
+      el("h3", { text: "Error Log" }),
+      el("div", { class: "hint", style: "margin-bottom:10px" }, [
+        "Every failed password attempt — site login, Developer login, or the Developer " +
+        "password required to delete an event or restore a backup — plus any other " +
+        "application error worth a permanent record. The attempted password itself is " +
+        "never stored, only that an attempt failed, when, and from what IP. Keeps the " +
+        "newest " + state.securityLogKeep + " entries."
+      ]),
+      el("div", {}, kids)
+    ]);
   }
 
   // Setup tab > Backups — "Backup Now" (backup.php action=run, synchronous —

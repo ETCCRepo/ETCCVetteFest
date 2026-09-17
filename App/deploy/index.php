@@ -30,6 +30,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'login
         $_SESSION['vettefest_authenticated'] = true;
         echo json_encode(['success' => true]);
     } else {
+        vettefest_log_security_event('login_failed', 'site password');
         http_response_code(401);
         echo json_encode(['success' => false]);
     }
@@ -53,6 +54,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'dev_l
     }
     $pw = (string)($_POST['password'] ?? '');
     $ok = !empty($DEV_PASSWORD_HASH) && hash_equals($DEV_PASSWORD_HASH, crypt($pw, $DEV_PASSWORD_HASH));
+    if (!$ok) vettefest_log_security_event('dev_login_failed', 'Developer login');
     echo json_encode(['success' => $ok]);
     if (!$ok) http_response_code(401);
     exit;
@@ -136,6 +138,7 @@ foreach ($perShowUrls as $key => $file) {
 }
 $siteConfig['showsApiUrl'] = 'shows.php';
 $siteConfig['backupApiUrl'] = 'backup.php';
+$siteConfig['securityLogApiUrl'] = 'security-log.php';
 $siteConfigScript = "<script>window.__vettefestSite = " . vettefest_safe_inline_json($siteConfig) . ";</script>\n";
 $bundle = str_replace('<head>', '<head>' . "\n" . $siteConfigScript, $bundle);
 

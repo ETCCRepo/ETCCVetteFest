@@ -217,6 +217,7 @@ if ($action === 'restore') {
     $devOk = !empty($DEV_PASSWORD_HASH) && $devPw !== '' &&
              hash_equals($DEV_PASSWORD_HASH, crypt($devPw, $DEV_PASSWORD_HASH));
     if (!$devOk) {
+        vettefest_log_security_event('dev_password_failed', 'backup restore');
         http_response_code(401);
         header('Content-Type: application/json');
         echo json_encode(['ok' => false, 'error' => 'The Developer password is required to restore a backup.']);
