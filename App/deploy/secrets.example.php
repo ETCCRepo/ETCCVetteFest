@@ -16,6 +16,18 @@ $PASSWORD_HASH = '$6$replace-with-real-salt$replaceWithRealHashXXXXXXXXXXXXXXXXX
 // Developer prompt always rejects (see index.php's action=dev_login check).
 $DEV_PASSWORD_HASH = '$6$replace-with-real-salt$replaceWithRealHashXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX.';
 
+// Separate, fixed token used ONLY by sync-registrations.js's
+// reportStartupFailure() (see logs.php's 'report_failure' action) — a
+// deliberately different credential from $PASSWORD_HASH above, so a broken
+// or missing VETTEFEST_SITE_PASSWORD on the import machine can still get a
+// failure line onto the Setup tab's View Logs list instead of vanishing
+// into a log file that only ever existed on that machine. Generate with
+//   openssl rand -hex 24
+// and set the SAME value as VETTEFEST_HEARTBEAT_TOKEN in that machine's
+// scheduled task environment. Leave empty to disable this reporting path
+// entirely (logs.php rejects every report_failure call while it's empty).
+$HEARTBEAT_TOKEN = '';
+
 // SMTP credentials used by forgot-password.php (via vettefest_send_mail() in
 // lib.php) to send the reset email reliably — PHP's raw mail() was observed
 // silently failing to deliver to Gmail from this Hostinger account (no

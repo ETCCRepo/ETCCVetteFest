@@ -6,9 +6,14 @@
 // app's logs.php — keep the two in sync.
 //
 // Actions:
-//   store (script, site-password auth)             — upload one run's log text.
-//   list  (browser or script, session-or-password) — recent log filenames + size/time.
-//   get   (browser or script, session-or-password) — raw text content of one log.
+//   store          (script, site-password auth) — upload one run's log text.
+//   list           (browser or script, session-or-password) — recent log filenames + size/time.
+//   get            (browser or script, session-or-password) — raw text content of one log.
+//   report_failure (script, separate $HEARTBEAT_TOKEN auth) — records a
+//                  one-line failure for a run that couldn't authenticate
+//                  with the site password at all (see its own comment below).
+//                  Ported from the sibling CarShow app, which added this
+//                  first — keep the two in sync.
 session_start();
 
 require __DIR__ . '/secrets.php';
@@ -63,6 +68,42 @@ function vettefest_logs_purge($logsDir) {
     foreach ((glob($logsDir . '/*.log') ?: []) as $f) {
         if (@filemtime($f) < $cutoff) @unlink($f);
     }
+}
+
+// Deliberately separate auth from every other action here: this exists
+// SPECIFICALLY for the case where sync-registrations.js can't authenticate
+// with the normal site password (missing/wrong VETTEFEST_SITE_PASSWORD, or
+// import-schedule.php's own 'check' call failing) and would otherwise have
+// no way to report that at all — those failures used to only ever reach a
+// local file on the machine that ran the import, invisible from the site.
+// $HEARTBEAT_TOKEN is a fixed, unrelated credential (see secrets.example.php)
+// so a broken site password can't also silently break this reporting path.
+// Writes a normal archived log file — same directory, same naming pattern,
+// same View Logs list as a real run's log — so nothing else needs to change
+// to surface it.
+if ($action === 'report_failure') {
+    if (empty($HEARTBEAT_TOKEN) || !hash_equals((string)$HEARTBEAT_TOKEN, (string)($input['token'] ?? ''))) {
+        http_response_code(401);
+        header('Content-Type: application/json');
+        echo json_encode(['ok' => false, 'error' => 'Invalid token.']);
+        exit;
+    }
+    $reason = trim((string)($input['reason'] ?? ''));
+    if ($reason === '') $reason = 'Unknown startup failure.';
+    if (strlen($reason) > 500) $reason = substr($reason, 0, 500) . '...(truncated)';
+    $name = 'sync-' . gmdate('Ymd-His') . '.log';
+    $line = gmdate('c') . '  FAILED (could not authenticate/start): ' . $reason . "\n";
+    $line .= gmdate('c') . '  RESULT: FAILED: ' . $reason . "\n";
+    if (@file_put_contents($logsDir . '/' . $name, $line) === false) {
+        http_response_code(500);
+        header('Content-Type: application/json');
+        echo json_encode(['ok' => false, 'error' => 'Could not save the log.']);
+        exit;
+    }
+    vettefest_logs_purge($logsDir);
+    header('Content-Type: application/json');
+    echo json_encode(['ok' => true]);
+    exit;
 }
 
 if ($action === 'store') {
