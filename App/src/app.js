@@ -1833,6 +1833,8 @@
       }
     }
 
+    var phpLogLink = el("a", { href: SITE_CONFIG.phpErrorLogApiUrl || "#", target: "_blank", rel: "noopener" }, ["🐘 View PHP Error Log"]);
+
     return el("div", { class: "panel", style: "margin-top:16px" }, [
       el("h3", { text: "Error Log" }),
       el("div", { class: "hint", style: "margin-bottom:10px" }, [
@@ -1841,6 +1843,15 @@
         "application error worth a permanent record. The attempted password itself is " +
         "never stored, only that an attempt failed, when, and from what IP. Keeps the " +
         "newest " + state.securityLogKeep + " entries."
+      ]),
+      el("div", { class: "form-row" }, [
+        el("span", { class: "form-label", text: "" }),
+        el("div", {}, [
+          phpLogLink,
+          el("div", { class: "hint", style: "margin-top:4px" }, [
+            "The website's own raw PHP errors/warnings — a different, lower-level log than the table below."
+          ])
+        ])
       ]),
       el("div", {}, kids)
     ]);

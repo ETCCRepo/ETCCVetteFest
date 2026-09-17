@@ -6,6 +6,23 @@
 // JSON read/write, safe-inline-script embedding, SMTP sending, and the
 // per-event data paths that would otherwise be copy-pasted across all of them.
 
+// Routes PHP's own runtime errors/warnings/notices — not something this app
+// ever wrote deliberately, unlike vettefest_log_security_event()'s own
+// separate JSON log below — into a file this app controls, instead of
+// Hostinger's shared, harder-to-reach default error_log. Runs the moment
+// this file is require()'d, i.e. on every request to every endpoint, since
+// they all require lib.php near the top. Setup tab > Error Log has a "View
+// PHP Error Log" link (php-error-log.php) that reads this file directly.
+// vettefest_data_root() is defined further down this same file — fine to
+// call here regardless of source order, PHP hoists top-level function
+// declarations across the whole file before any of it executes.
+$__vettefest_error_log_dir = vettefest_data_root();
+if ($__vettefest_error_log_dir !== null) {
+    ini_set('log_errors', '1');
+    ini_set('error_log', $__vettefest_error_log_dir . '/php-error.log');
+}
+unset($__vettefest_error_log_dir);
+
 // The site login accepts more than one password — $PASSWORD_HASH plus an
 // optional second one, $PASSWORD_HASH_2 (both in secrets.php; the second is
 // unset/empty by default, so a site with only one configured behaves exactly

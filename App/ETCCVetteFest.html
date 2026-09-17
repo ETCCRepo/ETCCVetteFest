@@ -557,7 +557,7 @@ table.report-preview-table th, table.report-preview-table td { font-size: 10px; 
   <div id="app"></div>
 </div>
 <footer class="app-footer">
-  <div class="footer-line"><span>v2.62 &middot; Deployed 09/17/2026 10:16 AM</span> &middot; <span>Website by Business Web Express &middot; <a href="https://businesswebexpress.com" target="_blank" rel="noopener">businesswebexpress.com</a></span> &middot; <span>&copy; 2026 East Tennessee Corvette Club &middot; Knoxville, TN &middot; <a href="mailto:etccwebsite.webmanager@gmail.com">etccwebsite.webmanager@gmail.com</a></span></div>
+  <div class="footer-line"><span>v2.63 &middot; Deployed 09/17/2026 10:26 AM</span> &middot; <span>Website by Business Web Express &middot; <a href="https://businesswebexpress.com" target="_blank" rel="noopener">businesswebexpress.com</a></span> &middot; <span>&copy; 2026 East Tennessee Corvette Club &middot; Knoxville, TN &middot; <a href="mailto:etccwebsite.webmanager@gmail.com">etccwebsite.webmanager@gmail.com</a></span></div>
 </footer>
 <script>
 /* @license
@@ -3600,6 +3600,8 @@ window.__vettefestReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQ
       }
     }
 
+    var phpLogLink = el("a", { href: SITE_CONFIG.phpErrorLogApiUrl || "#", target: "_blank", rel: "noopener" }, ["🐘 View PHP Error Log"]);
+
     return el("div", { class: "panel", style: "margin-top:16px" }, [
       el("h3", { text: "Error Log" }),
       el("div", { class: "hint", style: "margin-bottom:10px" }, [
@@ -3608,6 +3610,15 @@ window.__vettefestReportsBanner = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQ
         "application error worth a permanent record. The attempted password itself is " +
         "never stored, only that an attempt failed, when, and from what IP. Keeps the " +
         "newest " + state.securityLogKeep + " entries."
+      ]),
+      el("div", { class: "form-row" }, [
+        el("span", { class: "form-label", text: "" }),
+        el("div", {}, [
+          phpLogLink,
+          el("div", { class: "hint", style: "margin-top:4px" }, [
+            "The website's own raw PHP errors/warnings — a different, lower-level log than the table below."
+          ])
+        ])
       ]),
       el("div", {}, kids)
     ]);

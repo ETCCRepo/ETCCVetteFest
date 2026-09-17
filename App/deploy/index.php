@@ -139,6 +139,7 @@ foreach ($perShowUrls as $key => $file) {
 $siteConfig['showsApiUrl'] = 'shows.php';
 $siteConfig['backupApiUrl'] = 'backup.php';
 $siteConfig['securityLogApiUrl'] = 'security-log.php';
+$siteConfig['phpErrorLogApiUrl'] = 'php-error-log.php';
 $siteConfigScript = "<script>window.__vettefestSite = " . vettefest_safe_inline_json($siteConfig) . ";</script>\n";
 $bundle = str_replace('<head>', '<head>' . "\n" . $siteConfigScript, $bundle);
 
